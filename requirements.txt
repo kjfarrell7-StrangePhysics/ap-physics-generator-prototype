@@ -3,3 +3,4 @@ openai
 pydantic
 matplotlib
 numpy
+st-gsheets-connection
