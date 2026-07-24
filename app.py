@@ -5,7 +5,7 @@ from openai import OpenAI
 from streamlit_gsheets import GSheetsConnection
 
 # ---------------------------------------------------------
-# 1. UTF-8 Safe Environment Setup (Fixes local Windows bugs)
+# 1. UTF-8 Safe Environment Setup (Fixes local Windows encoding bugs)
 # ---------------------------------------------------------
 os.environ["PYTHONUTF8"] = "1"
 
@@ -19,19 +19,13 @@ st.set_page_config(
 def log_feedback_to_sheet(unit, topic, question_text, rating, comments):
     """Logs question data and feedback into a Google Sheet."""
     try:
-        # Connect to Google Sheets via Streamlit connection
         conn = st.connection("gsheets", type=GSheetsConnection)
-
-        # Read existing records
         existing_data = conn.read(ttl=0)
 
-        # Create new feedback record
         new_entry = pd.DataFrame(
             [
                 {
-                    "Timestamp": pd.Timestamp.now().strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    ),
+                    "Timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "Unit": unit,
                     "Topic": topic,
                     "Question": question_text,
@@ -41,13 +35,11 @@ def log_feedback_to_sheet(unit, topic, question_text, rating, comments):
             ]
         )
 
-        # Append and update sheet
         updated_df = pd.concat([existing_data, new_entry], ignore_index=True)
         conn.update(data=updated_df)
         return True
     except Exception as e:
-        # Fallback if Google Sheets secrets are not configured yet
-        st.info(f"Note: Feedback captured locally (Google Sheet connection pending).")
+        st.info("Note: Feedback captured locally (Google Sheet connection pending).")
         return False
 
 
@@ -64,14 +56,13 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 
 # ---------------------------------------------------------
-# 4. Main Application UI
+# 4. Main Application UI & Topic Selection
 # ---------------------------------------------------------
 st.title("⚛️ AP Physics Item Generator")
 st.caption(
     "Generate authentic AP-style multiple-choice items with integrated feedback logging."
 )
 
-# Topic Selection UI
 unit_option = st.selectbox(
     "Select AP Physics Unit",
     [
@@ -93,18 +84,18 @@ topic_description = st.text_input(
 # Initialize Session State Variables
 if "current_question" not in st.session_state:
     st.session_state.current_question = None
-if "feedback_submitted" not in st.session_state:
-    st.session_state.feedback_submitted = False
+if "last_rating" not in st.session_state:
+    st.session_state.last_rating = None
 
 # ---------------------------------------------------------
 # 5. Question Generation Logic
 # ---------------------------------------------------------
 if st.button("🚀 Generate AP Question", type="primary"):
-    st.session_state.feedback_submitted = False  # Reset feedback state for new question
+    st.session_state.last_rating = None  # Reset rating for new question
 
-    with st.spinner("Authoring AP-style item and validating math physics..."):
+    with st.spinner("Authoring AP-style item and validating math/physics..."):
         prompt = f"""
-        You are an expert AP Physics test author. Create a original multiple-choice item for:
+        You are an expert AP Physics test author. Create an original multiple-choice item for:
         Unit: {unit_option}
         Topic Context: {topic_description if topic_description else "Core AP Curriculum Standard"}
 
@@ -122,43 +113,47 @@ if st.button("🚀 Generate AP Question", type="primary"):
 
         st.session_state.current_question = response.choices[0].message.content
 
-# Display Generated Question
+# ---------------------------------------------------------
+# 6. Display Generated Question & Evaluation Tool
+# ---------------------------------------------------------
 if st.session_state.current_question:
     st.markdown("---")
     st.markdown(st.session_state.current_question)
 
-    # ---------------------------------------------------------
-    # 6. Integrated Feedback Loop & Data Collection UI
-    # ---------------------------------------------------------
+    # Integrated Feedback Loop UI
     st.markdown("---")
     st.subheader("📊 Rate & Evolve This Item")
-    st.caption(
-        "Your feedback helps refine prompt constraints to increase AP exam authenticity worldwide."
-    )
+    st.caption("Help refine prompt constraints. Flag incorrect answers, math errors, or weak distractors!")
 
-    # Streamlit Native Feedback Widget
-    rating_index = st.feedback("thumbs", key="item_rating")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("👍 Accurate & AP-Style", use_container_width=True):
+            st.session_state.last_rating = "Thumbs Up"
+    with col2:
+        if st.button("👎 Incorrect Answer / Needs Fix", use_container_width=True):
+            st.session_state.last_rating = "Thumbs Down"
 
+    # Selection indicator
+    if st.session_state.last_rating:
+        st.info(f"Selected Rating: **{st.session_state.last_rating}**")
+
+    # Feedback comments text area
     feedback_notes = st.text_area(
-        "Notes or Distractor Refinements (Optional)",
-        placeholder="e.g., 'Option C needs clearer vector notation' or 'Great conceptual prompt!'",
+        "Notes or Specific Errors (Optional)",
+        placeholder="e.g., 'The correct answer key says (B), but mathematical calculation yields (D).'",
         key="item_notes",
     )
 
-    if st.button("Submit Feedback", type="secondary"):
-        if rating_index is not None:
-            rating_label = "Thumbs Up" if rating_index == 1 else "Thumbs Down"
-
-            # Attempt to log feedback to database
+    # Submit Button
+    if st.button("Submit Feedback to Database", type="primary"):
+        if st.session_state.last_rating:
             log_feedback_to_sheet(
                 unit=unit_option,
                 topic=topic_description,
                 question_text=st.session_state.current_question,
-                rating=rating_label,
+                rating=st.session_state.last_rating,
                 comments=feedback_notes,
             )
-
-            st.session_state.feedback_submitted = True
-            st.success("✅ Feedback logged successfully! Thank you for contributing to the dataset.")
+            st.success("✅ Feedback logged successfully! Thank you for catching this item.")
         else:
-            st.warning("Please click either the 👍 or 👎 icon before submitting.")
+            st.warning("Please click either 👍 or 👎 above before submitting.")
