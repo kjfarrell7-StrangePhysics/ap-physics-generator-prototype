@@ -1,264 +1,493 @@
-import streamlit as st
-from openai import OpenAI
-from pydantic import BaseModel, Field
+import json
+import re
 import matplotlib.pyplot as plt
 import numpy as np
+import openai
+import pandas as pd
+import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 
-# Page Configuration
-st.set_page_config(page_title="AP Physics Question Generator", page_icon="⚛️", layout="wide")
+# ==========================================
+# 1. HELPER FUNCTIONS: LATEX & JSON CLEANUP
+# ==========================================
 
-# Password Protection Guard
-def check_password():
-    if "authenticated" not in st.session_state:
-        st.session_state["authenticated"] = False
 
-    if not st.session_state["authenticated"]:
-        st.title("🔒 AP Physics Generator - Private Access")
-        st.info("Please enter your password to access the app.")
-        password_input = st.text_input("Enter Access Password", type="password")
-        if st.button("Login"):
-            if password_input == "physics2026": 
-                st.session_state["authenticated"] = True
-                st.rerun()
-            else:
-                st.error("Incorrect password.")
-        return False
-    return True
+def clean_latex_for_streamlit(text: str) -> str:
+    """Converts LaTeX bracket/raw delimiters to standard Streamlit dollar-sign delimiters,
 
-if not check_password():
-    st.stop()
+    cleans backspace artifacts, and fixes literal double-escaped \\n sequences.
+    """
+    if not text:
+        return ""
 
-# --- APP HEADER ---
-st.title("⚛️ AP Physics Item Generator")
-st.caption("Generate AP-style multiple-choice questions with full curriculum units and visual diagram rendering.")
+    # Fix literal '\n' text strings leaked by JSON sanitization into actual newlines
+    text = text.replace(r"\n", "\n")
 
-# --- SIDEBAR CONFIGURATION ---
-with st.sidebar:
-    st.header("🔑 API Settings")
-    api_key = st.text_input("OpenAI API Key", type="password", help="Paste your sk-... key here")
-    
-    st.header("📚 Curriculum Settings")
-    exam_level = st.selectbox(
-        "Select AP Exam Level",
-        [
-            "AP Physics 1", 
-            "AP Physics 2", 
-            "AP Physics C: Mechanics", 
-            "AP Physics C: Electricity & Magnetism"
-        ]
+    # Clean \boldsymbol or mangled \b backspace escape artifacts -> convert to standard \vec{}
+    text = re.sub(r"[\x08]oldsymbol\{([^}]+)\}", r"\\vec{\1}", text)
+    text = re.sub(r"\\boldsymbol\{([^}]+)\}", r"\\vec{\1}", text)
+
+    # Convert \[ ... \] to $$ ... $$
+    text = re.sub(r"\\\[\s*", "$$", text)
+    text = re.sub(r"\s*\\\]", "$$", text)
+
+    # Convert \( ... \) to $ ... $
+    text = re.sub(r"\\\(\s*", "$", text)
+    text = re.sub(r"\s*\\\)", "$", text)
+
+    return text
+
+
+def sanitize_json_response(raw_str: str) -> dict:
+    """Robustly converts raw single LaTeX backslashes in GPT output (e.g. \\theta, \\frac, \\mu)
+
+    into double backslashes so json.loads() won't crash on invalid JSON escape sequences.
+    """
+
+    def fix_slash(match):
+        group = match.group(0)
+        if group == "\\\\":
+            return "\\\\"  # Preserve existing double backslashes
+        return "\\\\"  # Convert single backslash to double backslash
+
+    # Match either existing \\ OR any single \ that is NOT followed by " or \
+    cleaned = re.sub(r'\\\\|\\(?!["\\])', fix_slash, raw_str)
+
+    try:
+        return json.loads(cleaned, strict=False)
+    except json.JSONDecodeError:
+        # Fallback: force escape backslashes across raw payload
+        cleaned_fallback = re.sub(r'\\(?!["\\])', r"\\\\", raw_str)
+        return json.loads(cleaned_fallback, strict=False)
+
+
+# ==========================================
+# 2. VECTOR DIAGRAM ENGINE
+# ==========================================
+
+
+def safe_float(val, default=1.0):
+    """Safely converts model-generated numbers or strings to floats to prevent TypeErrors."""
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
+def draw_vector_diagram(vectors, title="Free-Body / Vector Diagram"):
+    """Generates a geometrically accurate vector diagram using Matplotlib."""
+    fig, ax = plt.subplots(figsize=(4, 4))
+
+    # Center object (point mass)
+    ax.plot(0, 0, "ko", markersize=8, zorder=5)
+
+    if not vectors:
+        vectors = []
+
+    # Safely extract magnitudes and handle string/numeric mismatches from LLM output
+    max_mag = max(
+        [safe_float(v.get("magnitude", 1.0)) for v in vectors], default=1.0
     )
-    
-    # Unit Lists for All AP Physics Courses
-    if exam_level == "AP Physics 1":
-        topics = [
-            "Unit 1: Kinematics",
-            "Unit 2: Force and Translational Dynamics",
-            "Unit 3: Work, Energy, and Power",
-            "Unit 4: Linear Momentum",
-            "Unit 5: Torque and Rotational Dynamics",
-            "Unit 6: Energy and Momentum of Rotating Systems",
-            "Unit 7: Oscillations & Simple Harmonic Motion (SHM)",
-            "Unit 8: Fluids (Density, Pressure, Buoyancy, & Fluid Dynamics)"
-        ]
-    elif exam_level == "AP Physics 2":
-        topics = [
-            "Unit 1: Fluids (Density, Pressure, Buoyancy, & Continuity)",
-            "Unit 2: Thermodynamics (PV Diagrams, Heat Engines, & First Law)",
-            "Unit 3: Electric Force, Field, & Potential",
-            "Unit 4: Electric Circuits (DC Circuits, RC Circuits, & Resistors)",
-            "Unit 5: Magnetism & Electromagnetic Induction (Faraday's Law)",
-            "Unit 6: Geometric & Physical Optics (Reflection, Refraction, Waves)",
-            "Unit 7: Quantum, Atomic, & Nuclear Physics (Photoelectric Effect, Half-life)"
-        ]
-    elif exam_level == "AP Physics C: Mechanics":
-        topics = [
-            "Kinematics (Calculus-Based)",
-            "Newton's Laws & Resistive Forces",
-            "Work, Energy, & Conservative Forces",
-            "System of Particles & Conservation of Momentum",
-            "Rotation & Moments of Inertia via Integration",
-            "Oscillations & Simple Harmonic Motion (SHM)",
-            "Gravitation & Planetary Motion"
-        ]
+    limit = max(1.8, max_mag * 1.45)
+
+    for vec in vectors:
+        raw_name = vec.get("name", "")
+        name = clean_latex_for_streamlit(raw_name)
+        angle_deg = safe_float(vec.get("angle_deg", 0))
+        mag = safe_float(vec.get("magnitude", 1.0))
+        color = vec.get("color", "black")
+
+        # Convert polar to Cartesian
+        angle_rad = np.radians(angle_deg)
+        dx = mag * np.cos(angle_rad)
+        dy = mag * np.sin(angle_rad)
+
+        # Draw vector arrow
+        ax.annotate(
+            "",
+            xy=(dx, dy),
+            xytext=(0, 0),
+            arrowprops=dict(
+                facecolor=color,
+                edgecolor=color,
+                width=2,
+                headwidth=7,
+                headlength=9,
+                shrink=0,
+            ),
+        )
+
+        # Offset label slightly past the arrowhead
+        lx, ly = dx * 1.18, dy * 1.18
+        ax.text(
+            lx,
+            ly,
+            name,
+            fontsize=11,
+            color=color,
+            ha="center",
+            va="center",
+            weight="bold",
+        )
+
+    # Maintain 1:1 aspect ratio so incline angles do not distort
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlim(-limit, limit)
+    ax.set_ylim(-limit, limit)
+
+    # Clean axes grid
+    ax.axhline(0, color="gray", linewidth=0.8, linestyle="--", alpha=0.6)
+    ax.axvline(0, color="gray", linewidth=0.8, linestyle="--", alpha=0.6)
+    ax.grid(True, linestyle=":", alpha=0.4)
+
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    ax.set_title(title, fontsize=10, pad=10)
+
+    plt.tight_layout()
+    return fig
+
+
+# ==========================================
+# 3. OPENAI BULK EXAM GENERATOR LOGIC
+# ==========================================
+
+
+def generate_ap_exam(course, q_format, q_style, topic, num_questions, api_key):
+    client = openai.OpenAI(api_key=api_key)
+
+    # Automatically enforce rigor rules based on course type
+    is_calculus_course = "C:" in course
+    if is_calculus_course:
+        rigor_guideline = (
+            "CALCULUS-BASED RIGOR (AP Physics C): The questions must explicitly"
+            " demand calculus applications where appropriate (e.g., evaluating"
+            " definite integrals for position-dependent forces"
+            " W = \\int F(x)dx, integration for rotational inertia"
+            " I = \\int r^2 dm, derivatives for velocity/acceleration, or"
+            " differential equations for circuit transients)."
+        )
     else:
-        topics = [
-            "Electrostatics & Gauss's Law",
-            "Electric Potential & Capacitance",
-            "Electric Circuits & RC Time Constants",
-            "Magnetic Fields & Ampere's Law",
-            "Electromagnetic Induction & Faraday's Law"
-        ]
+        rigor_guideline = (
+            "ALGEBRA-BASED RIGOR (AP Physics 1 & 2): Focus on proportional"
+            " reasoning, conceptual modeling, algebraic manipulation, and"
+            " graphical interpretation without requiring calculus."
+        )
+
+    # Tailor style instructions to match authentic College Board item flows
+    if q_style == "Conceptual":
+        style_instruction = (
+            "QUESTION STYLE (Conceptual/Graphical): Center the item heavily on"
+            " qualitative reasoning, reading and interpreting graphs (such as"
+            " position-time, velocity-time, potential wells, force-position,"
+            " or field lines), analyzing slopes and areas under curves, and"
+            " evaluating motion maps."
+        )
+    elif q_style == "Quantitative Arithmetic":
+        style_instruction = (
+            "QUESTION STYLE (Quantitative Arithmetic): Focus on numerical"
+            " calculation, algebraic derivations, symbolic variable solving,"
+            " and precise quantitative problem-solving with proper dimensional"
+            " analysis."
+        )
+    elif q_style == "Experimental Design":
+        style_instruction = (
+            "QUESTION STYLE (Experimental Design): Focus on laboratory setups,"
+            " identifying experimental uncertainties, designing data collection"
+            " procedures, error analysis, and data linearization techniques."
+        )
+    else:
+        style_instruction = (
+            "Ensure the set includes a balanced mix of conceptual/graphical,"
+            " quantitative arithmetic, and experimental design questions across"
+            " the generated set."
+        )
+
+    system_prompt = f"""
+    You are an expert AP Physics exam writer and College Board item designer for {course}. 
+    Generate a complete assessment containing exactly {num_questions} DISTINCT, non-repeating questions based on the user parameters.
     
-    selected_topic = st.selectbox("Select Unit / Topic", topics)
+    {rigor_guideline}
+    {style_instruction}
     
-    cognitive_skill = st.selectbox(
-        "Target Cognitive Skill",
-        [
-            "Qualitative-Quantitative Translation (QQT)",
-            "Conceptual Analysis & Proportional Reasoning",
-            "Experimental Design & Data Interpretation",
-            "Mathematical Derivation & Synthesis"
+    Ensure each question covers a unique angle, scenario, or sub-concept within the topic so there is zero redundancy across the set.
+
+    Output EXCLUSIVELY in valid JSON format using the EXACT structure below:
+    {{
+        "questions": [
+            {{
+                "scratchpad_derivation": "Step-by-step mathematical solution worked out FIRST.",
+                "calculated_target_value": "4.41 V", 
+                "question_text": "The problem description. Use standard single dollar sign LaTeX ($...$) for math formulas.",
+                "options": ["A) 7.6 V", "B) 4.4 V", "C) 12.0 V", "D) 0.0 V"], 
+                "correct_answer": "B", 
+                "explanation": "Detailed step-by-step mathematical derivation matching the calculated_target_value.",
+                "has_diagram": false, 
+                "vectors": [
+                    {{"name": "$F_g$", "angle_deg": 270, "magnitude": 1.0, "color": "blue"}}
+                ]
+            }}
         ]
+    }}
+
+    CRITICAL EXECUTION ORDER & ACCURACY RULES:
+    1. ALWAYS solve the problem in 'scratchpad_derivation' FIRST before outputting 'options'.
+    2. 'calculated_target_value' MUST be explicitly included as one of the choices in 'options'.
+    3. NEVER fabricate or lie about mathematical results in 'explanation' to fit a bad option choice.
+    4. Format ALL math variables and equations with single dollar signs ($...$). NEVER use brackets like \\[ \\] or \\( \\).
+    5. DO NOT use \\boldsymbol or complex macros for vectors. Always use \\vec{{F}} or standard capital letters like F.
+    6. PHYSICS & TERMINOLOGY RULES:
+       - NUMERICAL VS. SYMBOLIC CONSISTENCY: If the question stem uses variable symbols without explicit numerical values, ALL options MUST be symbolic expressions.
+       - ALGEBRAIC INTEGRITY: When solving symbolic derivations, write out every fraction inversion step explicitly. Never drop numerical coefficients during simplification.
+       - CIRCUITS TERMINOLOGY: Do NOT label a circuit as 'LRC' unless an inductor (L) is explicitly present. Use 'RC circuit' or 'RL circuit' when only two components exist. Always specify if a circuit is 'charging' or 'discharging'.
+       - RC / RL CIRCUITS NUMERICAL VALUES: Set time 't' to be an exact multiple or standard fraction of the time constant tau (e.g., t = tau, t = 2*tau).
+    """
+
+    user_prompt = f"""
+    Course: {course}
+    Question Format: {q_format}
+    Question Style / Focus: {q_style}
+    Physics Topic: {topic}
+    Number of Questions Required: {num_questions}
+    """
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        max_tokens=3000,
+        temperature=0.4,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
     )
 
-# Structured Output Schema with Internal Audit
-class APQuestion(BaseModel):
-    step_by_step_derivation: str = Field(description="Scratchpad field for solving problem step-by-step")
-    conservation_check: str = Field(description="AUDIT CHECK: Verify conservation of momentum, energy, or units. Must state PASS.")
-    correct_numerical_value: str = Field(description="Exact computed numerical value or algebraic expression")
-    scenario: str
-    needs_graph: bool
-    graph_type: str  # 'shm_position', 'fluid_depth_pressure', 'force_vs_position', 'kinematics_vt', or 'none'
-    question_stem: str
-    options: list[str] = Field(description="List of 4 options starting with 'A)', 'B)', 'C)', 'D)' in plain text math formatting")
-    correct_answer: str = Field(description="Strictly single letter: 'A', 'B', 'C', or 'D'")
-    explanation: str
-    misconception_map: list[str]
+    raw_json_str = response.choices[0].message.content
+    return sanitize_json_response(raw_json_str)
 
-# Graph Generator Function
-def render_physics_graph(graph_type):
-    fig, ax = plt.subplots(figsize=(6, 3.5))
-    t = np.linspace(0, 10, 200)
-    
-    if graph_type == "shm_position":
-        y = 2 * np.cos(1.5 * t)
-        ax.plot(t, y, color="#1f77b4", linewidth=2)
-        ax.set_title("Position vs. Time (Simple Harmonic Motion)")
-        ax.set_xlabel("Time t (s)")
-        ax.set_ylabel("Position x (m)")
-        ax.grid(True, linestyle="--", alpha=0.6)
-    elif graph_type == "fluid_depth_pressure":
-        depth = np.linspace(0, 5, 100)
-        pressure = 100 + 10 * depth
-        ax.plot(depth, pressure, color="#d62728", linewidth=2)
-        ax.set_title("Absolute Pressure vs. Depth in Fluid")
-        ax.set_xlabel("Depth h (m)")
-        ax.set_ylabel("Pressure P (kPa)")
-        ax.grid(True, linestyle="--", alpha=0.6)
-    elif graph_type == "force_vs_position":
-        x = np.linspace(0, 8, 100)
-        F = 12 - 1.5 * x
-        ax.plot(x, F, color="#2ca02c", linewidth=2)
-        ax.set_title("Force vs. Position")
-        ax.set_xlabel("Position x (m)")
-        ax.set_ylabel("Force F (N)")
-        ax.grid(True, linestyle="--", alpha=0.6)
-    else:
-        # Default Kinematics v-t graph
-        v = 5 + 2 * t - 0.3 * t**2
-        ax.plot(t, v, color="#ff7f0e", linewidth=2)
-        ax.set_title("Velocity vs. Time")
-        ax.set_xlabel("Time t (s)")
-        ax.set_ylabel("Velocity v (m/s)")
-        ax.grid(True, linestyle="--", alpha=0.6)
-        
-    st.pyplot(fig)
 
-# Helper Function for Answer Validation
-def check_answer(user_choice, correct_answer_field, options):
-    if not user_choice or not correct_answer_field:
-        return False, "N/A"
-    
-    user_str = user_choice.strip()
-    target_raw = correct_answer_field.strip()
-    
-    target_letter = None
-    if len(target_raw) == 1 and target_raw.upper() in ['A', 'B', 'C', 'D']:
-        target_letter = target_raw.upper()
-    elif target_raw.startswith("Option ") and len(target_raw) >= 8 and target_raw[7].upper() in ['A', 'B', 'C', 'D']:
-        target_letter = target_raw[7].upper()
-    elif target_raw[0].upper() in ['A', 'B', 'C', 'D']:
-        target_letter = target_raw[0].upper()
-        
-    user_letter = None
-    if user_str in options:
-        idx = options.index(user_str)
-        user_letter = ['A', 'B', 'C', 'D'][idx]
-    elif user_str[0].upper() in ['A', 'B', 'C', 'D']:
-        user_letter = user_str[0].upper()
-        
-    is_correct = (user_letter == target_letter) if (user_letter and target_letter) else (user_str == target_raw)
-    return is_correct, (target_letter or target_raw)
+# ==========================================
+# 4. STREAMLIT UI SETUP
+# ==========================================
 
-# --- MAIN PAGE GENERATION ---
-if st.button("🚀 Generate AP Question", type="primary"):
-    if not api_key:
-        st.error("Please enter your OpenAI API Key in the sidebar to proceed.")
-    else:
+st.set_page_config(
+    page_title="AP Physics Exam Generator", page_icon="⚡", layout="centered"
+)
+st.title("⚡ AP Physics Exam & Question Generator")
+
+# Password verification removed for NSF/Mentor public access review
+st.subheader("Exam Configuration")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    course = st.selectbox(
+        "AP Course",
+        [
+            "AP Physics 1",
+            "AP Physics 2",
+            "AP Physics C: Mechanics",
+            "AP Physics C: Electricity & Magnetism",
+        ],
+    )
+
+    q_format = st.selectbox(
+        "Question Format",
+        [
+            "Single-Select Multiple Choice (MC)",
+            "Multi-Select Multiple Choice (MS)",
+            "Free Response Question (FRQ)",
+        ],
+    )
+
+with col2:
+    q_style = st.selectbox(
+        "Question Style / Focus",
+        [
+            "Conceptual",
+            "Quantitative Arithmetic",
+            "Experimental Design",
+            "Random (Mix of All Types)",
+        ],
+    )
+
+    # Course-specific topic dictionary mapped to official AP objectives
+    ap_topics_map = {
+        "AP Physics 1": [
+            "Kinematics",
+            "Dynamics",
+            "Circular Motion and Gravitation",
+            "Work, Energy, and Power",
+            "Linear Momentum",
+            "Torque and Rotational Motion",
+            "Simple Harmonic Motion",
+            "Fluids",
+        ],
+        "AP Physics 2": [
+            "Fluids",
+            "Thermodynamics",
+            "Electric Force, Field, and Potential",
+            "Electric Circuits",
+            "Magnetism and Electromagnetism",
+            "Optics",
+            "Modern Physics",
+        ],
+        "AP Physics C: Mechanics": [
+            "Kinematics",
+            "Newton's Laws of Motion",
+            "Work, Energy, and Power",
+            "Systems of Particles and Linear Momentum",
+            "Rotation and Angular Momentum",
+            "Oscillations",
+            "Gravitation",
+        ],
+        "AP Physics C: Electricity & Magnetism": [
+            "Electrostatics",
+            "Conductors, Capacitors, and Dielectrics",
+            "Electric Circuits",
+            "Magnetic Fields",
+            "Electromagnetism",
+        ],
+    }
+
+    # Dynamically filter topics based on the selected course
+    available_topics = ap_topics_map.get(course, ["General Physics"])
+    topic = st.selectbox("Physics Topic", available_topics)
+
+# Question Count Slider (capped at 5)
+num_questions = st.slider(
+    "Number of Questions in Exam Set", min_value=1, max_value=5, value=3
+)
+
+# Generation Trigger
+if st.button("Generate Exam Set", type="primary"):
+    with st.spinner(
+        f"Drafting custom {num_questions}-question AP exam set..."
+    ):
         try:
-            client = OpenAI(api_key=api_key)
-            
-            system_prompt = f"""
-            You are a senior AP Physics test author for College Board.
-            Create a unique, creative, and mathematically pristine multiple-choice question for:
-            - Exam Level: {exam_level}
-            - Topic: {selected_topic}
-            - Cognitive Skill: {cognitive_skill}
-
-            STRICT MATHEMATICAL AUDIT & EXECUTION ORDER:
-            1. STEP 1 (Derivation): Solve the physics problem step-by-step in 'step_by_step_derivation'.
-            2. STEP 2 (Conservation Check): Verify conservation laws (e.g. p_initial == p_final, KE_initial == KE_final for elastic, units match). Record in 'conservation_check'. If math fails, recalculate.
-            3. STEP 3 (Correct Value): Store exact result in 'correct_numerical_value'.
-            4. STEP 4 (Options): Populate 'options' with plain text math formatting (NO RAW LATEX LIKE '\\frac{{1}}{{2}}'). One option MUST be 'correct_numerical_value'. Distractors must represent real physics misconceptions.
-            5. STEP 5 (Answer Key): Set 'correct_answer' to strictly ONE LETTER ONLY ('A', 'B', 'C', or 'D').
-            6. GRAPHING: Set 'needs_graph' to true if interpreting a figure/graph, and choose 'graph_type' from 'shm_position', 'fluid_depth_pressure', 'force_vs_position', 'kinematics_vt', or 'none'.
-            """
-
-            with st.spinner("Generating AP Physics Question & Running Conservation Audit..."):
-                response = client.beta.chat.completions.parse(
-                    model="gpt-4o-mini",
-                    temperature=0.7,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"Generate a fresh, mathematically verified {exam_level} question on {selected_topic} focusing on {cognitive_skill}."}
-                    ],
-                    response_format=APQuestion
-                )
-                
-                q_data = response.choices[0].message.parsed
-                st.session_state["current_question"] = q_data
-
+            data = generate_ap_exam(
+                course,
+                q_format,
+                q_style,
+                topic,
+                num_questions,
+                st.secrets["OPENAI_API_KEY"],
+            )
+            st.session_state["current_exam"] = data
         except Exception as e:
-            st.error(f"Generation failed: {e}")
+            st.error(f"Error generating exam: {e}")
 
-# --- DISPLAY QUESTION CARD ---
-if "current_question" in st.session_state:
-    q = st.session_state["current_question"]
-    
-    st.markdown("---")
-    st.subheader("📝 Practice Question")
-    
-    st.write(q.scenario)
-    
-    # Render Actual Visual Graph if needed
-    if q.needs_graph and q.graph_type != "none":
-        st.markdown("#### 📊 Reference Graph")
-        render_physics_graph(q.graph_type)
-        
-    st.markdown(f"**{q.question_stem}**")
-    
-    # Multiple Choice Options
-    user_choice = st.radio("Select your answer:", q.options, index=None)
-    
-    if st.button("Submit Answer"):
-        if user_choice is None:
-            st.warning("Please select an answer option first.")
-        else:
-            is_correct, correct_letter = check_answer(user_choice, q.correct_answer, q.options)
-            
-            if is_correct:
-                st.success(f"🎉 Correct! Option {correct_letter} is the right answer.")
+# Display Exam Output
+if "current_exam" in st.session_state and "questions" in st.session_state["current_exam"]:
+    exam_data = st.session_state["current_exam"]
+    questions = exam_data.get("questions", [])
+
+    st.divider()
+    st.header(f"📋 Generated {course} Assessment ({topic})")
+    st.markdown(
+        f"*Total Questions: {len(questions)} | Format: {q_format}*"
+    )
+
+    # Loop through each question in the bulk exam set
+    for i, q in enumerate(questions, start=1):
+        st.markdown(f"---")
+        q_clean = clean_latex_for_streamlit(q.get("question_text", ""))
+        st.markdown(f"### Question {i}\n{q_clean}")
+
+        # Render Vector Diagram if applicable
+        if q.get("has_diagram", False) and q.get("vectors", []):
+            fig = draw_vector_diagram(
+                q.get("vectors", []), title=f"Q{i} Diagram: {topic}"
+            )
+            st.pyplot(fig)
+
+        options = [
+            clean_latex_for_streamlit(opt) for opt in q.get("options", [])
+        ]
+
+        if options and q_format != "Free Response Question (FRQ)":
+            st.markdown(f"#### Choose Your Answer (Q{i}):")
+
+            if "Multi-Select" in q_format:
+                user_selections = []
+                for idx, opt in enumerate(options):
+                    if st.checkbox(opt, key=f"q_{i}_ms_opt_{idx}"):
+                        user_selections.append(opt[0])
+
+                if st.button(f"Check Answer (Q{i})", key=f"check_btn_{i}"):
+                    raw_correct = str(q.get("correct_answer", ""))
+                    correct_letters = [
+                        c.strip()
+                        for c in re.split(r"[,&]", raw_correct)
+                        if c.strip() in "ABCD"
+                    ]
+
+                    if sorted(user_selections) == sorted(correct_letters):
+                        st.success(
+                            f"🎉 Q{i} Correct! Answers: {', '.join(correct_letters)}."
+                        )
+                    else:
+                        st.error(
+                            f"❌ Q{i} Incorrect. Correct answers: {', '.join(correct_letters)}."
+                        )
             else:
-                st.error(f"❌ Incorrect. The correct answer is Option {correct_letter}.")
-                
-    # Instructor Solutions & Misconceptions
-    with st.expander("🔍 View Instructor Solutions & Misconception Map"):
-        st.markdown("### Correct Answer Explanation")
-        st.write(q.explanation)
-        
-        st.markdown("### Internal Math & Conservation Audit")
-        st.info(f"**Verification Check:** {q.conservation_check}")
-        
-        st.markdown("### Distractor Misconception Analysis")
-        for misc in q.misconception_map:
-            st.markdown(f"- {misc}")
+                user_choice = st.radio(
+                    "Options", options, key=f"q_{i}_radio", index=0
+                )
+
+                if st.button(f"Check Answer (Q{i})", key=f"check_btn_{i}"):
+                    correct_letter = str(
+                        q.get("correct_answer", "")
+                    ).strip()
+                    if user_choice.startswith(correct_letter):
+                        st.success(
+                            f"🎉 Q{i} Correct! Answer: {correct_letter}."
+                        )
+                    else:
+                        st.error(
+                            f"❌ Q{i} Incorrect. Correct answer: {correct_letter}."
+                        )
+
+        # Solution Expander for each question
+        with st.expander(f"View Solution & Explanation — Question {i}"):
+            st.markdown(
+                f"**Correct Answer:** {q.get('correct_answer', 'N/A')}"
+            )
+            st.markdown(
+                clean_latex_for_streamlit(q.get("explanation", ""))
+            )
+
+    # --- EXAM FEEDBACK LOGGING ---
+    st.divider()
+    st.subheader("Provide Feedback on Exam Set")
+    rating = st.radio("Rating", ["👍 Good", "👎 Needs Improvement"], key="exam_rating")
+    comment = st.text_area("Comments / Bug Details for this Exam", key="exam_comment")
+
+    if st.button("Submit Exam Feedback", key="submit_exam_feedback"):
+        try:
+            conn = st.connection("gsheets", type=GSheetsConnection)
+            spreadsheet_url = st.secrets["connections"]["gsheets"][
+                "spreadsheet"
+            ]
+            existing_df = conn.read(spreadsheet=spreadsheet_url)
+
+            new_row = {
+                "Timestamp": str(np.datetime64("now")),
+                "Course": course,
+                "Format": q_format,
+                "Style": q_style,
+                "Topic": topic,
+                "QuestionCount": len(questions),
+                "Rating": rating,
+                "Comment": comment,
+            }
+
+            new_row_df = pd.DataFrame([new_row])
+            updated_df = pd.concat(
+                [existing_df, new_row_df], ignore_index=True
+            )
+
+            conn.update(spreadsheet=spreadsheet_url, data=updated_df)
+            st.success("Exam feedback successfully saved to Google Sheets!")
+        except Exception as e:
+            st.error(f"Error saving feedback: {e}")
