@@ -1,6 +1,6 @@
 streamlit
 openai
-pydantic
-matplotlib
+pandas
 numpy
-streamlit-gsheets
+matplotlib
+st-gsheets-connection
