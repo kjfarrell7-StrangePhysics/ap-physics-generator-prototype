@@ -267,7 +267,7 @@ def generate_ap_exam(course, q_format, q_style, topic, num_questions, api_key):
 
 
 # ==========================================
-# 4. STREAMLIT UI SETUP
+# 4. STREAMLIT UI SETUP (NO PASSWORD REQUIRED)
 # ==========================================
 
 st.set_page_config(
@@ -275,7 +275,6 @@ st.set_page_config(
 )
 st.title("⚡ AP Physics Exam & Question Generator")
 
-# Password verification removed for NSF/Mentor public access review
 st.subheader("Exam Configuration")
 
 col1, col2 = st.columns(2)
@@ -411,7 +410,7 @@ if "current_exam" in st.session_state and "questions" in st.session_state["curre
             if "Multi-Select" in q_format:
                 user_selections = []
                 for idx, opt in enumerate(options):
-                    if st.checkbox(opt, key=f"q_{i}_ms_opt_{idx}"):
+                    if st.checkbox(opt, key=f"q_{i}_ms_opt_{idx}„"):
                         user_selections.append(opt[0])
 
                 if st.button(f"Check Answer (Q{i})", key=f"check_btn_{i}"):
