@@ -174,14 +174,17 @@ def generate_ap_exam(course, q_format, q_style, topic, num_questions, api_key):
             " graphical interpretation without requiring calculus."
         )
 
-    # Tailor style instructions to match authentic College Board item flows
+    # Tailor style instructions and strictly enforce visual/graph generation for conceptual items
     if q_style == "Conceptual":
         style_instruction = (
             "QUESTION STYLE (Conceptual/Graphical): Center the item heavily on"
             " qualitative reasoning, reading and interpreting graphs (such as"
             " position-time, velocity-time, potential wells, force-position,"
             " or field lines), analyzing slopes and areas under curves, and"
-            " evaluating motion maps."
+            " evaluating motion maps. MANDATORY VISUAL RULE: For conceptual and"
+            " graphical questions, you MUST set 'has_diagram': true and provide"
+            " realistic vector or component definitions inside the 'vectors'"
+            " array to accompany the graph description."
         )
     elif q_style == "Quantitative Arithmetic":
         style_instruction = (
@@ -195,12 +198,15 @@ def generate_ap_exam(course, q_format, q_style, topic, num_questions, api_key):
             "QUESTION STYLE (Experimental Design): Focus on laboratory setups,"
             " identifying experimental uncertainties, designing data collection"
             " procedures, error analysis, and data linearization techniques."
+            " MANDATORY VISUAL RULE: Set 'has_diagram': true where a setup or"
+            " vector representation clarifies the experiment."
         )
     else:
         style_instruction = (
             "Ensure the set includes a balanced mix of conceptual/graphical,"
             " quantitative arithmetic, and experimental design questions across"
-            " the generated set."
+            " the generated set. Enable 'has_diagram': true for conceptual or"
+            " vector-heavy items."
         )
 
     system_prompt = f"""
@@ -222,7 +228,7 @@ def generate_ap_exam(course, q_format, q_style, topic, num_questions, api_key):
                 "options": ["A) 7.6 V", "B) 4.4 V", "C) 12.0 V", "D) 0.0 V"], 
                 "correct_answer": "B", 
                 "explanation": "Detailed step-by-step mathematical derivation matching the calculated_target_value.",
-                "has_diagram": false, 
+                "has_diagram": true, 
                 "vectors": [
                     {{"name": "$F_g$", "angle_deg": 270, "magnitude": 1.0, "color": "blue"}}
                 ]
@@ -410,7 +416,7 @@ if "current_exam" in st.session_state and "questions" in st.session_state["curre
             if "Multi-Select" in q_format:
                 user_selections = []
                 for idx, opt in enumerate(options):
-                    if st.checkbox(opt, key=f"q_{i}_ms_opt_{idx}„"):
+                    if st.checkbox(opt, key=f"q_{i}_ms_opt_{idx}"):
                         user_selections.append(opt[0])
 
                 if st.button(f"Check Answer (Q{i})", key=f"check_btn_{i}"):
