@@ -20,130 +20,149 @@ def clean_latex_for_streamlit(text: str) -> str:
     if not text:
         return ""
 
-    # Fix literal '\n' text strings leaked by JSON sanitization into actual newlines
     text = text.replace(r"\n", "\n")
-
-    # Clean \boldsymbol or mangled \b backspace escape artifacts -> convert to standard \vec{}
     text = re.sub(r"[\x08]oldsymbol\{([^}]+)\}", r"\\vec{\1}", text)
     text = re.sub(r"\\boldsymbol\{([^}]+)\}", r"\\vec{\1}", text)
-
-    # Convert \[ ... \] to $$ ... $$
     text = re.sub(r"\\\[\s*", "$$", text)
     text = re.sub(r"\s*\\\]", "$$", text)
-
-    # Convert \( ... \) to $ ... $
     text = re.sub(r"\\\(\s*", "$", text)
     text = re.sub(r"\s*\\\)", "$", text)
-
     return text
 
 
 def sanitize_json_response(raw_str: str) -> dict:
-    """Robustly converts raw single LaTeX backslashes in GPT output (e.g. \\theta, \\frac, \\mu)
+    """Robustly converts raw single LaTeX backslashes in GPT output into double backslashes
 
-    into double backslashes so json.loads() won't crash on invalid JSON escape sequences.
+    so json.loads() won't crash on invalid escape sequences.
     """
 
     def fix_slash(match):
         group = match.group(0)
         if group == "\\\\":
-            return "\\\\"  # Preserve existing double backslashes
-        return "\\\\"  # Convert single backslash to double backslash
+            return "\\\\"
+        return "\\\\"
 
-    # Match either existing \\ OR any single \ that is NOT followed by " or \
     cleaned = re.sub(r'\\\\|\\(?!["\\])', fix_slash, raw_str)
 
     try:
         return json.loads(cleaned, strict=False)
     except json.JSONDecodeError:
-        # Fallback: force escape backslashes across raw payload
         cleaned_fallback = re.sub(r'\\(?!["\\])', r"\\\\", raw_str)
         return json.loads(cleaned_fallback, strict=False)
 
 
 # ==========================================
-# 2. VECTOR DIAGRAM ENGINE
+# 2. UPGRADED DIAGRAM & VISUAL ENGINE
 # ==========================================
 
 
 def safe_float(val, default=1.0):
-    """Safely converts model-generated numbers or strings to floats to prevent TypeErrors."""
     try:
         return float(val)
     except (ValueError, TypeError):
         return default
 
 
-def draw_vector_diagram(vectors, title="Free-Body / Vector Diagram"):
-    """Generates a geometrically accurate vector diagram using Matplotlib."""
-    fig, ax = plt.subplots(figsize=(4, 4))
+def draw_vector_diagram(diag_type, vectors, title="Physics Visual Model", extra_params=None):
+    """Generates rigorous, context-driven AP Physics diagrams (Free-Body, Inclined Planes, or Graphs)."""
+    fig, ax = plt.subplots(figsize=(5, 4))
+    if extra_params is None:
+        extra_params = {}
 
-    # Center object (point mass)
-    ax.plot(0, 0, "ko", markersize=8, zorder=5)
+    if diag_type == "incline":
+        # Draw an inclined plane
+        theta = safe_float(extra_params.get("angle", 30))
+        theta_rad = np.radians(theta)
+        
+        # Incline triangle vertices
+        L = 4.0
+        x_vals = [0, L, L, 0]
+        y_vals = [0, 0, L * np.tan(theta_rad), 0]
+        ax.fill(x_vals, y_vals, color="#e0e0e0", edgecolor="black", linewidth=1.5, zorder=1)
+        
+        # Block position on incline
+        bx = L * 0.5
+        by = bx * np.tan(theta_rad)
+        ax.plot(bx, by, "ks", markersize=12, zorder=3)
+        
+        # Draw vectors relative to the block
+        for vec in vectors:
+            raw_name = vec.get("name", "")
+            name = clean_latex_for_streamlit(raw_name)
+            mag = safe_float(vec.get("magnitude", 1.0)) * 0.8
+            color = vec.get("color", "red")
+            
+            # Orient vectors based on incline physics (Normal vs Gravity vs Friction)
+            if "N" in raw_name or "Normal" in raw_name:
+                # Perpendicular to incline
+                dx = -mag * np.sin(theta_rad)
+                dy = mag * np.cos(theta_rad)
+            elif "f" in raw_name or "Friction" in raw_name:
+                # Parallel up the incline
+                dx = -mag * np.cos(theta_rad)
+                dy = -mag * np.sin(theta_rad)
+            else:
+                # Default downward gravity vector
+                dx, dy = 0, -mag
 
-    if not vectors:
-        vectors = []
+            ax.annotate(
+                "", xy=(bx + dx, by + dy), xytext=(bx, by),
+                arrowprops=dict(facecolor=color, edgecolor=color, width=1.5, headwidth=6, headlength=8)
+            )
+            ax.text(bx + dx * 1.25, by + dy * 1.25, name, fontsize=10, color=color, weight="bold", ha="center")
 
-    # Safely extract magnitudes and handle string/numeric mismatches from LLM output
-    max_mag = max(
-        [safe_float(v.get("magnitude", 1.0)) for v in vectors], default=1.0
-    )
-    limit = max(1.8, max_mag * 1.45)
+        ax.set_xlim(-1, L + 1)
+        ax.set_ylim(-1, L + 1)
+        ax.set_aspect("equal")
 
-    for vec in vectors:
-        raw_name = vec.get("name", "")
-        name = clean_latex_for_streamlit(raw_name)
-        angle_deg = safe_float(vec.get("angle_deg", 0))
-        mag = safe_float(vec.get("magnitude", 1.0))
-        color = vec.get("color", "black")
+    elif diag_type == "graph":
+        # Draw a physical curve or motion graph
+        x_data = extra_params.get("x_data", [0, 1, 2, 3, 4])
+        y_data = extra_params.get("y_data", [0, 2, 4, 4, 0])
+        x_label = extra_params.get("x_label", "Time (s)")
+        y_label = extra_params.get("y_label", "Velocity (m/s)")
+        
+        ax.plot(x_data, y_data, color="b", linewidth=2.5, marker="o")
+        ax.fill_between(x_data, y_data, color="b", alpha=0.15)
+        ax.set_xlabel(x_label, fontsize=10)
+        ax.set_ylabel(y_label, fontsize=10)
+        ax.grid(True, linestyle=":", alpha=0.5)
 
-        # Convert polar to Cartesian
-        angle_rad = np.radians(angle_deg)
-        dx = mag * np.cos(angle_rad)
-        dy = mag * np.sin(angle_rad)
+    else:
+        # Standard Point Mass Free-Body Diagram
+        ax.plot(0, 0, "ko", markersize=8, zorder=5)
+        if not vectors:
+            vectors = []
+        max_mag = max([safe_float(v.get("magnitude", 1.0)) for v in vectors], default=1.0)
+        limit = max(1.8, max_mag * 1.45)
 
-        # Draw vector arrow
-        ax.annotate(
-            "",
-            xy=(dx, dy),
-            xytext=(0, 0),
-            arrowprops=dict(
-                facecolor=color,
-                edgecolor=color,
-                width=2,
-                headwidth=7,
-                headlength=9,
-                shrink=0,
-            ),
-        )
+        for vec in vectors:
+            raw_name = vec.get("name", "")
+            name = clean_latex_for_streamlit(raw_name)
+            angle_deg = safe_float(vec.get("angle_deg", 0))
+            mag = safe_float(vec.get("magnitude", 1.0))
+            color = vec.get("color", "black")
 
-        # Offset label slightly past the arrowhead
-        lx, ly = dx * 1.18, dy * 1.18
-        ax.text(
-            lx,
-            ly,
-            name,
-            fontsize=11,
-            color=color,
-            ha="center",
-            va="center",
-            weight="bold",
-        )
+            angle_rad = np.radians(angle_deg)
+            dx = mag * np.cos(angle_rad)
+            dy = mag * np.sin(angle_rad)
 
-    # Maintain 1:1 aspect ratio so incline angles do not distort
-    ax.set_aspect("equal", adjustable="box")
-    ax.set_xlim(-limit, limit)
-    ax.set_ylim(-limit, limit)
+            ax.annotate(
+                "", xy=(dx, dy), xytext=(0, 0),
+                arrowprops=dict(facecolor=color, edgecolor=color, width=2, headwidth=7, headlength=9)
+            )
+            ax.text(dx * 1.18, dy * 1.18, name, fontsize=11, color=color, ha="center", va="center", weight="bold")
 
-    # Clean axes grid
-    ax.axhline(0, color="gray", linewidth=0.8, linestyle="--", alpha=0.6)
-    ax.axvline(0, color="gray", linewidth=0.8, linestyle="--", alpha=0.6)
-    ax.grid(True, linestyle=":", alpha=0.4)
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlim(-limit, limit)
+        ax.set_ylim(-limit, limit)
+        ax.axhline(0, color="gray", linewidth=0.8, linestyle="--", alpha=0.6)
+        ax.axvline(0, color="gray", linewidth=0.8, linestyle="--", alpha=0.6)
+        ax.grid(True, linestyle=":", alpha=0.4)
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
 
-    ax.set_xticklabels([])
-    ax.set_yticklabels([])
     ax.set_title(title, fontsize=10, pad=10)
-
     plt.tight_layout()
     return fig
 
@@ -156,97 +175,75 @@ def draw_vector_diagram(vectors, title="Free-Body / Vector Diagram"):
 def generate_ap_exam(course, q_format, q_style, topic, num_questions, api_key):
     client = openai.OpenAI(api_key=api_key)
 
-    # Automatically enforce rigor rules based on course type
     is_calculus_course = "C:" in course
     if is_calculus_course:
         rigor_guideline = (
-            "CALCULUS-BASED RIGOR (AP Physics C): The questions must explicitly"
-            " demand calculus applications where appropriate (e.g., evaluating"
-            " definite integrals for position-dependent forces"
-            " W = \\int F(x)dx, integration for rotational inertia"
-            " I = \\int r^2 dm, derivatives for velocity/acceleration, or"
-            " differential equations for circuit transients)."
+            "CALCULUS-BASED RIGOR (AP Physics C): Require calculus applications "
+            "such as definite integrals for work/energy or fields, and derivatives for motion."
         )
     else:
         rigor_guideline = (
-            "ALGEBRA-BASED RIGOR (AP Physics 1 & 2): Focus on proportional"
-            " reasoning, conceptual modeling, algebraic manipulation, and"
-            " graphical interpretation without requiring calculus."
+            "ALGEBRA-BASED RIGOR (AP Physics 1 & 2): Focus on proportional reasoning, "
+            "conceptual modeling, and graphical interpretation."
         )
 
-    # Tailor style instructions and strictly enforce visual/graph generation for conceptual items
     if q_style == "Conceptual":
         style_instruction = (
-            "QUESTION STYLE (Conceptual/Graphical): Center the item heavily on"
-            " qualitative reasoning, reading and interpreting graphs (such as"
-            " position-time, velocity-time, potential wells, force-position,"
-            " or field lines), analyzing slopes and areas under curves, and"
-            " evaluating motion maps. MANDATORY VISUAL RULE: For conceptual and"
-            " graphical questions, you MUST set 'has_diagram': true and provide"
-            " realistic vector or component definitions inside the 'vectors'"
-            " array to accompany the graph description."
+            "QUESTION STYLE (Conceptual/Graphical): Center on qualitative reasoning, reading and interpreting graphs "
+            "or physical setup models. MANDATORY VISUAL RULE: Set 'has_diagram': true, choose an appropriate "
+            "'diag_type' ('fbd', 'incline', or 'graph'), and populate the data structures so a rigorous visual renders."
         )
     elif q_style == "Quantitative Arithmetic":
         style_instruction = (
-            "QUESTION STYLE (Quantitative Arithmetic): Focus on numerical"
-            " calculation, algebraic derivations, symbolic variable solving,"
-            " and precise quantitative problem-solving with proper dimensional"
-            " analysis."
+            "QUESTION STYLE (Quantitative Arithmetic): Focus on numerical calculation, algebraic derivations, "
+            "and precise quantitative problem-solving."
         )
     elif q_style == "Experimental Design":
         style_instruction = (
-            "QUESTION STYLE (Experimental Design): Focus on laboratory setups,"
-            " identifying experimental uncertainties, designing data collection"
-            " procedures, error analysis, and data linearization techniques."
-            " MANDATORY VISUAL RULE: Set 'has_diagram': true where a setup or"
-            " vector representation clarifies the experiment."
+            "QUESTION STYLE (Experimental Design): Focus on laboratory setups, data collection, and error analysis. "
+            "MANDATORY VISUAL RULE: Set 'has_diagram': true with a relevant physical diagram structure."
         )
     else:
-        style_instruction = (
-            "Ensure the set includes a balanced mix of conceptual/graphical,"
-            " quantitative arithmetic, and experimental design questions across"
-            " the generated set. Enable 'has_diagram': true for conceptual or"
-            " vector-heavy items."
-        )
+        style_instruction = "Ensure a balanced mix of conceptual, quantitative, and experimental design items."
 
     system_prompt = f"""
-    You are an expert AP Physics exam writer and College Board item designer for {course}. 
-    Generate a complete assessment containing exactly {num_questions} DISTINCT, non-repeating questions based on the user parameters.
+    You are an expert AP Physics item writer for College Board exam design in {course}. 
+    Generate exactly {num_questions} DISTINCT, non-repeating questions based on the user parameters.
     
     {rigor_guideline}
     {style_instruction}
     
-    Ensure each question covers a unique angle, scenario, or sub-concept within the topic so there is zero redundancy across the set.
+    PSYCHOMETRIC DISTRACTOR REQUIREMENT:
+    Incorrect multiple-choice options (distractors) MUST NOT be random numbers. They must be engineered around 
+    well-documented AP student misconceptions (e.g., confusing mass with weight, omitting sine/cosine components, 
+    forgetting direction, or treating velocity-time graph slopes as absolute positions).
 
     Output EXCLUSIVELY in valid JSON format using the EXACT structure below:
     {{
         "questions": [
             {{
                 "scratchpad_derivation": "Step-by-step mathematical solution worked out FIRST.",
-                "calculated_target_value": "4.41 V", 
-                "question_text": "The problem description. Use standard single dollar sign LaTeX ($...$) for math formulas.",
-                "options": ["A) 7.6 V", "B) 4.4 V", "C) 12.0 V", "D) 0.0 V"], 
+                "calculated_target_value": "4.41 N", 
+                "question_text": "The problem description with standard single dollar sign LaTeX ($...$) for math.",
+                "options": ["A) 7.6 N", "B) 4.4 N", "C) 12.0 N", "D) 0.0 N"], 
                 "correct_answer": "B", 
-                "explanation": "Detailed step-by-step mathematical derivation matching the calculated_target_value.",
-                "has_diagram": true, 
+                "explanation": "Detailed step-by-step derivation explaining why distractors represent common misconceptions.",
+                "has_diagram": true,
+                "diag_type": "incline",
                 "vectors": [
-                    {{"name": "$F_g$", "angle_deg": 270, "magnitude": 1.0, "color": "blue"}}
-                ]
+                    {{"name": "$F_g$", "angle_deg": 270, "magnitude": 1.0, "color": "blue"}},
+                    {{"name": "$N$", "angle_deg": 90, "magnitude": 0.86, "color": "green"}}
+                ],
+                "extra_params": {{"angle": 30}}
             }}
         ]
     }}
 
-    CRITICAL EXECUTION ORDER & ACCURACY RULES:
-    1. ALWAYS solve the problem in 'scratchpad_derivation' FIRST before outputting 'options'.
-    2. 'calculated_target_value' MUST be explicitly included as one of the choices in 'options'.
-    3. NEVER fabricate or lie about mathematical results in 'explanation' to fit a bad option choice.
-    4. Format ALL math variables and equations with single dollar signs ($...$). NEVER use brackets like \\[ \\] or \\( \\).
-    5. DO NOT use \\boldsymbol or complex macros for vectors. Always use \\vec{{F}} or standard capital letters like F.
-    6. PHYSICS & TERMINOLOGY RULES:
-       - NUMERICAL VS. SYMBOLIC CONSISTENCY: If the question stem uses variable symbols without explicit numerical values, ALL options MUST be symbolic expressions.
-       - ALGEBRAIC INTEGRITY: When solving symbolic derivations, write out every fraction inversion step explicitly. Never drop numerical coefficients during simplification.
-       - CIRCUITS TERMINOLOGY: Do NOT label a circuit as 'LRC' unless an inductor (L) is explicitly present. Use 'RC circuit' or 'RL circuit' when only two components exist. Always specify if a circuit is 'charging' or 'discharging'.
-       - RC / RL CIRCUITS NUMERICAL VALUES: Set time 't' to be an exact multiple or standard fraction of the time constant tau (e.g., t = tau, t = 2*tau).
+    CRITICAL RULES:
+    1. Solve in 'scratchpad_derivation' FIRST.
+    2. 'calculated_target_value' MUST match one of the choices in 'options'.
+    3. Format ALL math with single dollar signs ($...$). Never use brackets like \\[ \\].
+    4. For diag_type, choose either 'fbd', 'incline', or 'graph'.
     """
 
     user_prompt = f"""
@@ -273,7 +270,7 @@ def generate_ap_exam(course, q_format, q_style, topic, num_questions, api_key):
 
 
 # ==========================================
-# 4. STREAMLIT UI SETUP (NO PASSWORD REQUIRED)
+# 4. STREAMLIT UI SETUP
 # ==========================================
 
 st.set_page_config(
@@ -316,7 +313,6 @@ with col2:
         ],
     )
 
-    # Course-specific topic dictionary mapped to official AP objectives
     ap_topics_map = {
         "AP Physics 1": [
             "Kinematics",
@@ -355,20 +351,15 @@ with col2:
         ],
     }
 
-    # Dynamically filter topics based on the selected course
     available_topics = ap_topics_map.get(course, ["General Physics"])
     topic = st.selectbox("Physics Topic", available_topics)
 
-# Question Count Slider (capped at 5)
 num_questions = st.slider(
     "Number of Questions in Exam Set", min_value=1, max_value=5, value=3
 )
 
-# Generation Trigger
 if st.button("Generate Exam Set", type="primary"):
-    with st.spinner(
-        f"Drafting custom {num_questions}-question AP exam set..."
-    ):
+    with st.spinner(f"Drafting custom {num_questions}-question AP exam set with cognitive distractor modeling..."):
         try:
             data = generate_ap_exam(
                 course,
@@ -382,33 +373,28 @@ if st.button("Generate Exam Set", type="primary"):
         except Exception as e:
             st.error(f"Error generating exam: {e}")
 
-# Display Exam Output
 if "current_exam" in st.session_state and "questions" in st.session_state["current_exam"]:
     exam_data = st.session_state["current_exam"]
     questions = exam_data.get("questions", [])
 
     st.divider()
     st.header(f"📋 Generated {course} Assessment ({topic})")
-    st.markdown(
-        f"*Total Questions: {len(questions)} | Format: {q_format}*"
-    )
+    st.markdown(f"*Total Questions: {len(questions)} | Format: {q_format}*")
 
-    # Loop through each question in the bulk exam set
     for i, q in enumerate(questions, start=1):
         st.markdown(f"---")
         q_clean = clean_latex_for_streamlit(q.get("question_text", ""))
         st.markdown(f"### Question {i}\n{q_clean}")
 
-        # Render Vector Diagram if applicable
-        if q.get("has_diagram", False) and q.get("vectors", []):
-            fig = draw_vector_diagram(
-                q.get("vectors", []), title=f"Q{i} Diagram: {topic}"
-            )
+        # Render Advanced Diagnostic Diagram / Model
+        if q.get("has_diagram", False):
+            diag_type = q.get("diag_type", "fbd")
+            vectors = q.get("vectors", [])
+            extra_params = q.get("extra_params", {})
+            fig = draw_vector_diagram(diag_type, vectors, title=f"Q{i} Visual Model: {topic}", extra_params=extra_params)
             st.pyplot(fig)
 
-        options = [
-            clean_latex_for_streamlit(opt) for opt in q.get("options", [])
-        ]
+        options = [clean_latex_for_streamlit(opt) for opt in q.get("options", [])]
 
         if options and q_format != "Free Response Question (FRQ)":
             st.markdown(f"#### Choose Your Answer (Q{i}):")
@@ -422,45 +408,26 @@ if "current_exam" in st.session_state and "questions" in st.session_state["curre
                 if st.button(f"Check Answer (Q{i})", key=f"check_btn_{i}"):
                     raw_correct = str(q.get("correct_answer", ""))
                     correct_letters = [
-                        c.strip()
-                        for c in re.split(r"[,&]", raw_correct)
-                        if c.strip() in "ABCD"
+                        c.strip() for c in re.split(r"[,&]", raw_correct) if c.strip() in "ABCD"
                     ]
 
                     if sorted(user_selections) == sorted(correct_letters):
-                        st.success(
-                            f"🎉 Q{i} Correct! Answers: {', '.join(correct_letters)}."
-                        )
+                        st.success(f"🎉 Q{i} Correct! Answers: {', '.join(correct_letters)}.")
                     else:
-                        st.error(
-                            f"❌ Q{i} Incorrect. Correct answers: {', '.join(correct_letters)}."
-                        )
+                        st.error(f"❌ Q{i} Incorrect. Correct answers: {', '.join(correct_letters)}.")
             else:
-                user_choice = st.radio(
-                    "Options", options, key=f"q_{i}_radio", index=0
-                )
+                user_choice = st.radio("Options", options, key=f"q_{i}_radio", index=0)
 
                 if st.button(f"Check Answer (Q{i})", key=f"check_btn_{i}"):
-                    correct_letter = str(
-                        q.get("correct_answer", "")
-                    ).strip()
+                    correct_letter = str(q.get("correct_answer", "")).strip()
                     if user_choice.startswith(correct_letter):
-                        st.success(
-                            f"🎉 Q{i} Correct! Answer: {correct_letter}."
-                        )
+                        st.success(f"🎉 Q{i} Correct! Answer: {correct_letter}.")
                     else:
-                        st.error(
-                            f"❌ Q{i} Incorrect. Correct answer: {correct_letter}."
-                        )
+                        st.error(f"❌ Q{i} Incorrect. Correct answer: {correct_letter}.")
 
-        # Solution Expander for each question
         with st.expander(f"View Solution & Explanation — Question {i}"):
-            st.markdown(
-                f"**Correct Answer:** {q.get('correct_answer', 'N/A')}"
-            )
-            st.markdown(
-                clean_latex_for_streamlit(q.get("explanation", ""))
-            )
+            st.markdown(f"**Correct Answer:** {q.get('correct_answer', 'N/A')}")
+            st.markdown(clean_latex_for_streamlit(q.get("explanation", "")))
 
     # --- EXAM FEEDBACK LOGGING ---
     st.divider()
@@ -471,9 +438,7 @@ if "current_exam" in st.session_state and "questions" in st.session_state["curre
     if st.button("Submit Exam Feedback", key="submit_exam_feedback"):
         try:
             conn = st.connection("gsheets", type=GSheetsConnection)
-            spreadsheet_url = st.secrets["connections"]["gsheets"][
-                "spreadsheet"
-            ]
+            spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
             existing_df = conn.read(spreadsheet=spreadsheet_url)
 
             new_row = {
@@ -487,10 +452,8 @@ if "current_exam" in st.session_state and "questions" in st.session_state["curre
                 "Comment": comment,
             }
 
-            new_row_df = pd.DataFrame([new_row])
-            updated_df = pd.concat(
-                [existing_df, new_row_df], ignore_index=True
-            )
+            new_row_df = DataFrame([new_row]) if 'DataFrame' in globals() else pd.DataFrame([new_row])
+            updated_df = pd.concat([existing_df, new_row_df], ignore_index=True)
 
             conn.update(spreadsheet=spreadsheet_url, data=updated_df)
             st.success("Exam feedback successfully saved to Google Sheets!")
