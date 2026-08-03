@@ -245,15 +245,16 @@ def generate_single_ap_question(
     if q_style == "Conceptual":
         style_instruction = (
             "QUESTION STYLE (Conceptual/Graphical): Center on qualitative reasoning, reading and interpreting graphs "
-            "or physical setup models. DIAGRAM RULE: Use a diagram ONLY if it is pedagogically necessary. "
-            "If 'has_diagram': true, choose a dynamic 'diag_type' ('fbd', 'incline', or 'graph') that explicitly matches "
-            "the physical scenario. If 'diag_type' is 'graph', you MUST calculate mathematically precise 'x_data' and 'y_data' arrays "
-            "that align perfectly with the question text and physical laws (e.g., proper parabolic curves for free-fall distance)."
+            "or physical setup models. CRITICAL PEDAGOGICAL RULE FOR DIAGRAMS: "
+            "Set 'has_diagram': true ONLY if the diagram tests graphical analysis or conceptual setup. "
+            "NEVER include a diagram that explicitly plots or displays the numerical answer on an axis (e.g., do NOT plot a distance-vs-time curve that explicitly shows the final answer value on the coordinate axis for a simple calculation question). "
+            "If 'diag_type' is 'graph', it must be a Velocity-Time graph or Acceleration-Time graph when testing graphical interpretation."
         )
     elif q_style == "Quantitative Arithmetic":
         style_instruction = (
             "QUESTION STYLE (Quantitative Arithmetic): Focus on numerical calculation, algebraic derivations, "
-            "and precise quantitative problem-solving. Diagrams should only be included if essential to geometry/vectors."
+            "and precise quantitative problem-solving. "
+            "PEDAGOGICAL RULE: Set 'has_diagram': false unless a physical vector/geometry sketch is strictly necessary to understand the setup without giving away the final numerical value."
         )
     elif q_style == "Experimental Design":
         style_instruction = (
@@ -280,14 +281,10 @@ def generate_single_ap_question(
     {style_instruction}
     {exclusion_context}
     
-    RIGOROUS PHYSICAL VERIFICATION:
-    - Double-check all physics calculations before finalizing options.
-    - If a graph or diagram is included, its plotted data or visual components must precisely mirror the numerical values and physics equations in the text.
-    
-    PSYCHOMETRIC DISTRACTOR REQUIREMENT:
-    Incorrect multiple-choice options (distractors) MUST NOT be random numbers. They must be engineered around 
-    well-documented AP student misconceptions (e.g., confusing mass with weight, omitting sine/cosine components, 
-    forgetting direction, or mixing up graph slopes/areas).
+    RIGOROUS ASSESSMENT INTEGRITY RULES:
+    1. NEVER GIVE AWAY THE ANSWER IN A DIAGRAM: If the question is a direct calculation (like finding displacement, force, or energy), do not use a solved coordinate graph that reveals the final answer on its axis. 
+    2. Double-check all physics calculations before finalizing options.
+    3. Psychometric Distractors: Incorrect multiple-choice options MUST NOT be random numbers. They must be engineered around well-documented AP student misconceptions (e.g., confusing mass with weight, omitting sine/cosine components, forgetting direction, or mixing up graph slopes/areas).
 
     Output EXCLUSIVELY in valid JSON format using the EXACT structure below:
     {{
@@ -297,23 +294,17 @@ def generate_single_ap_question(
         "options": ["A) 14.7 m", "B) 44.1 m", "C) 29.4 m", "D) 88.2 m"], 
         "correct_answer": "B", 
         "explanation": "Detailed step-by-step derivation matching the calculated_target_value and explaining distractors.",
-        "has_diagram": true,
-        "diag_type": "graph",
+        "has_diagram": false,
+        "diag_type": "none",
         "vectors": [],
-        "extra_params": {{
-            "x_data": [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0],
-            "y_data": [0, 1.225, 4.9, 11.025, 19.6, 30.625, 44.1],
-            "x_label": "Time (s)",
-            "y_label": "Distance (m)",
-            "curve_type": "quadratic"
-        }}
+        "extra_params": {{}}
     }}
 
     CRITICAL RULES:
     1. Solve in 'scratchpad_derivation' FIRST.
     2. 'calculated_target_value' MUST match one of the choices in 'options'.
     3. Format ALL math with single dollar signs ($...$). Never use brackets like \\[ \\].
-    4. DIAGRAM SYNCHRONIZATION: If has_diagram is true and diag_type is 'graph', extra_params['x_data'] and extra_params['y_data'] MUST accurately reflect the exact mathematical equations governing the problem.
+    4. Set 'has_diagram': false for pure calculation questions to prevent giving away answers.
     """
 
     user_prompt = f"""
@@ -437,7 +428,7 @@ generate_clicked = st.button("Generate Next Test Question", type="primary")
 
 if generate_clicked:
     with st.spinner(
-        "Synthesizing unique AP item and locking in synchronized visuals..."
+        "Synthesizing unique AP item and enforcing pedagogical constraints..."
     ):
         try:
             # Pass complete historical text context to prevent repetition
@@ -477,8 +468,8 @@ if st.session_state["test_bank"]:
         q_clean = clean_latex_for_streamlit(q.get("question_text", ""))
         st.markdown(f"### Question {i}\n{q_clean}")
 
-        # Render Synchronized Diagram / Model only if flagged
-        if q.get("has_diagram", False):
+        # Render Synchronized Diagram / Model only if pedagogically necessary and safe
+        if q.get("has_diagram", False) and q.get("diag_type", "none") != "none":
             diag_type = q.get("diag_type", "fbd")
             vectors = q.get("vectors", [])
             extra_params = q.get("extra_params", {})
