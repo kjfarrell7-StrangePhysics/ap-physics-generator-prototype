@@ -52,7 +52,7 @@ def sanitize_json_response(raw_str: str) -> dict:
 
 
 # ==========================================
-# 2. FULLY SYNCHRONIZED DYNAMIC DIAGRAM ENGINE
+# 2. FULLY SYNCHRONIZED & POLISHED DIAGRAM ENGINE
 # ==========================================
 
 
@@ -66,9 +66,9 @@ def safe_float(val, default=1.0):
 def draw_synchronized_diagram(
     diag_type, vectors, title="Physics Visual Model", extra_params=None
 ):
-    """Renders graphics driven directly by the AI's calculated variables, guaranteeing
+    """Renders graphics driven directly by the AI's calculated variables, with
 
-    100% mathematical and visual synchronization with the question text.
+    clean, publication-grade axis padding and framing for professional display.
     """
     fig, ax = plt.subplots(figsize=(5, 4))
     if extra_params is None:
@@ -135,7 +135,6 @@ def draw_synchronized_diagram(
         ax.set_aspect("equal")
 
     elif diag_type == "graph":
-        # Dynamically draw plots using parameters explicitly calculated by the LLM
         x_data = extra_params.get("x_data", [0, 5])
         y_data = extra_params.get("y_data", [0, 10])
         x_label = extra_params.get("x_label", "Time (s)")
@@ -147,14 +146,11 @@ def draw_synchronized_diagram(
         ax.set_ylabel(y_label, fontsize=10)
         ax.grid(True, linestyle=":", alpha=0.5)
 
-        # Ensure axes scale smoothly around the data points
-        ax.set_xlim(
-            min(x_data) - (max(x_data) * 0.1 if max(x_data) > 0 else 1),
-            max(x_data) * 1.15 if max(x_data) > 0 else 5,
-        )
-        ax.set_ylim(
-            0, max(y_data) * 1.15 if max(y_data) > 0 else 10
-        )
+        # Polished bounds: tightly frame the data with a clean 10% breathing room
+        max_x = max(x_data) if x_data else 5
+        max_y = max(y_data) if y_data else 10
+        ax.set_xlim(0, max_x * 1.1 if max_x > 0 else 5)
+        ax.set_ylim(0, max_y * 1.1 if max_y > 0 else 10)
 
     else:
         ax.plot(0, 0, "ko", markersize=8, zorder=5)
@@ -409,7 +405,7 @@ num_questions = st.slider(
 )
 
 if st.button("Generate Exam Set", type="primary"):
-    with st.spinner(f"Drafting custom {num_questions}-question AP exam set with synchronized visual modeling..."):
+    with st.spinner(f"Drafting custom {num_questions}-question AP exam set with polished visual models..."):
         try:
             data = generate_ap_exam(
                 course,
@@ -436,7 +432,7 @@ if "current_exam" in st.session_state and "questions" in st.session_state["curre
         q_clean = clean_latex_for_streamlit(q.get("question_text", ""))
         st.markdown(f"### Question {i}\n{q_clean}")
 
-        # Render 100% Synchronized Diagram / Model
+        # Render Polished, Synchronized Diagram / Model
         if q.get("has_diagram", False):
             diag_type = q.get("diag_type", "fbd")
             vectors = q.get("vectors", [])
