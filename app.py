@@ -140,13 +140,24 @@ def draw_synchronized_diagram(
         x_label = extra_params.get("x_label", "Time (s)")
         y_label = extra_params.get("y_label", "Velocity (m/s)")
 
-        ax.plot(x_data, y_data, color="b", linewidth=2.5, marker="o")
+        curve_type = extra_params.get("curve_type", "linear")
+        if curve_type == "quadratic":
+            ax.plot(
+                x_data,
+                y_data,
+                color="b",
+                linewidth=2.5,
+                linestyle="-",
+                marker="o",
+            )
+        else:
+            ax.plot(x_data, y_data, color="b", linewidth=2.5, marker="o")
+
         ax.fill_between(x_data, y_data, color="b", alpha=0.15)
         ax.set_xlabel(x_label, fontsize=10)
         ax.set_ylabel(y_label, fontsize=10)
         ax.grid(True, linestyle=":", alpha=0.5)
 
-        # Polished bounds: tightly frame the data with a clean 10% breathing room
         max_x = max(x_data) if x_data else 5
         max_y = max(y_data) if y_data else 10
         ax.set_xlim(0, max_x * 1.1 if max_x > 0 else 5)
@@ -234,15 +245,15 @@ def generate_single_ap_question(
     if q_style == "Conceptual":
         style_instruction = (
             "QUESTION STYLE (Conceptual/Graphical): Center on qualitative reasoning, reading and interpreting graphs "
-            "or physical setup models. MANDATORY VISUAL RULE: Set 'has_diagram': true, choose an appropriate "
-            "'diag_type' ('fbd', 'incline', or 'graph'). EXACT DATA SYNC & PHYSICS INTEGRITY: If 'diag_type' is 'graph', "
-            "you MUST mathematically calculate the exact 'x_data' and 'y_data' array values matching the numbers stated "
-            "in the question text with 100% mathematical and physical precision (e.g., quadratic motion curves for distance-time)."
+            "or physical setup models. DIAGRAM RULE: Use a diagram ONLY if it is pedagogically necessary. "
+            "If 'has_diagram': true, choose a dynamic 'diag_type' ('fbd', 'incline', or 'graph') that explicitly matches "
+            "the physical scenario. If 'diag_type' is 'graph', you MUST calculate mathematically precise 'x_data' and 'y_data' arrays "
+            "that align perfectly with the question text and physical laws (e.g., proper parabolic curves for free-fall distance)."
         )
     elif q_style == "Quantitative Arithmetic":
         style_instruction = (
             "QUESTION STYLE (Quantitative Arithmetic): Focus on numerical calculation, algebraic derivations, "
-            "and precise quantitative problem-solving."
+            "and precise quantitative problem-solving. Diagrams should only be included if essential to geometry/vectors."
         )
     elif q_style == "Experimental Design":
         style_instruction = (
@@ -255,8 +266,10 @@ def generate_single_ap_question(
     exclusion_context = ""
     if previous_questions:
         exclusion_context = (
-            f"EXCLUSION RULE: The teacher has already generated these questions in this test session: {previous_questions}. "
-            f"You MUST generate a completely unique, novel scenario testing a different aspect of '{topic}' to ensure variety."
+            f"STRICT UNIQUENESS & DEDUPLICATION MANDATE:\n"
+            f"The teacher has already generated the following questions in this test session:\n{json.dumps(previous_questions, indent=2)}\n\n"
+            f"You are strictly forbidden from repeating these specific physical scenarios, numerical values, or identical visual setups. "
+            f"You MUST introduce an entirely novel physical context, distinct variables, or a completely different sub-topic under '{topic}'."
         )
 
     system_prompt = f"""
@@ -269,7 +282,7 @@ def generate_single_ap_question(
     
     RIGOROUS PHYSICAL VERIFICATION:
     - Double-check all physics calculations before finalizing options.
-    - If a graph is generated, its plotted curve or line must precisely match the physics equations stated in the question text.
+    - If a graph or diagram is included, its plotted data or visual components must precisely mirror the numerical values and physics equations in the text.
     
     PSYCHOMETRIC DISTRACTOR REQUIREMENT:
     Incorrect multiple-choice options (distractors) MUST NOT be random numbers. They must be engineered around 
@@ -279,19 +292,20 @@ def generate_single_ap_question(
     Output EXCLUSIVELY in valid JSON format using the EXACT structure below:
     {{
         "scratchpad_derivation": "Step-by-step mathematical solution and physics verification worked out FIRST.",
-        "calculated_target_value": "25 m", 
-        "question_text": "A car starts from rest and accelerates at a constant rate of 2 m/s^2 for 5 s. What is the total distance traveled?",
-        "options": ["A) 10 m", "B) 25 m", "C) 50 m", "D) 5 m"], 
+        "calculated_target_value": "44.1 m", 
+        "question_text": "An object is dropped from rest and falls freely under gravity for 3 seconds. How far does it fall?",
+        "options": ["A) 14.7 m", "B) 44.1 m", "C) 29.4 m", "D) 88.2 m"], 
         "correct_answer": "B", 
         "explanation": "Detailed step-by-step derivation matching the calculated_target_value and explaining distractors.",
         "has_diagram": true,
         "diag_type": "graph",
         "vectors": [],
         "extra_params": {{
-            "x_data": [0, 5],
-            "y_data": [0, 10],
+            "x_data": [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0],
+            "y_data": [0, 1.225, 4.9, 11.025, 19.6, 30.625, 44.1],
             "x_label": "Time (s)",
-            "y_label": "Velocity (m/s)"
+            "y_label": "Distance (m)",
+            "curve_type": "quadratic"
         }}
     }}
 
@@ -299,7 +313,7 @@ def generate_single_ap_question(
     1. Solve in 'scratchpad_derivation' FIRST.
     2. 'calculated_target_value' MUST match one of the choices in 'options'.
     3. Format ALL math with single dollar signs ($...$). Never use brackets like \\[ \\].
-    4. GRAPHICAL ACCURACY: If diag_type is 'graph', extra_params['x_data'] and extra_params['y_data'] MUST accurately reflect the exact numbers in the question text.
+    4. DIAGRAM SYNCHRONIZATION: If has_diagram is true and diag_type is 'graph', extra_params['x_data'] and extra_params['y_data'] MUST accurately reflect the exact mathematical equations governing the problem.
     """
 
     user_prompt = f"""
@@ -312,7 +326,7 @@ def generate_single_ap_question(
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         max_tokens=2000,
-        temperature=0.5,
+        temperature=0.7,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": system_prompt},
@@ -335,7 +349,7 @@ st.title("⚡ AP Physics Test Builder & Item Generator")
 
 st.markdown(
     """
-*Build your custom AP exam **one rigorous question at a time**. Each generated item is uniquely crafted, 
+*Build your custom exam **one rigorous question at a time**. Each generated item is uniquely crafted, 
 pedagogically verified, and paired with custom-rendered visual models designed for professional testing.*
 """
 )
@@ -416,26 +430,31 @@ with col2:
     available_topics = ap_topics_map.get(course, ["General Physics"])
     topic = st.selectbox("Physics Topic", available_topics)
 
-# Initialize session state for building a test bank of questions
 if "test_bank" not in st.session_state:
     st.session_state["test_bank"] = []
 
 generate_clicked = st.button("Generate Next Test Question", type="primary")
 
 if generate_clicked:
-    with st.spinner("Synthesizing rigorous AP item and verifying visual model..."):
+    with st.spinner(
+        "Synthesizing unique AP item and locking in synchronized visuals..."
+    ):
         try:
-            # Collect previously generated question summaries to avoid duplication
-            prev_summaries = [
-                q.get("question_text", "")[:50]
+            # Pass complete historical text context to prevent repetition
+            prev_questions_context = [
+                {
+                    "question_text": q.get("question_text", ""),
+                    "diag_type": q.get("diag_type", "none"),
+                }
                 for q in st.session_state["test_bank"]
             ]
+
             new_q = generate_single_ap_question(
                 course,
                 q_format,
                 q_style,
                 topic,
-                prev_summaries,
+                prev_questions_context,
                 st.secrets["OPENAI_API_KEY"],
             )
             if new_q and "question_text" in new_q:
@@ -458,7 +477,7 @@ if st.session_state["test_bank"]:
         q_clean = clean_latex_for_streamlit(q.get("question_text", ""))
         st.markdown(f"### Question {i}\n{q_clean}")
 
-        # Render Polished, Synchronized Diagram / Model
+        # Render Synchronized Diagram / Model only if flagged
         if q.get("has_diagram", False):
             diag_type = q.get("diag_type", "fbd")
             vectors = q.get("vectors", [])
