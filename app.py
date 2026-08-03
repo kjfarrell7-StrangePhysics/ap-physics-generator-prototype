@@ -242,27 +242,29 @@ def generate_single_ap_question(
             "conceptual modeling, and graphical interpretation."
         )
 
-    if q_style == "Conceptual":
+    # --- INCORPORATING PEDAGOGICAL CATEGORIES & BEST PRACTICES ---
+    if q_style == "Conceptual / Qualitative":
         style_instruction = (
-            "QUESTION STYLE (Conceptual/Graphical): Center on qualitative reasoning, reading and interpreting graphs "
-            "or physical setup models. CRITICAL PEDAGOGICAL RULE FOR DIAGRAMS: "
-            "Set 'has_diagram': true ONLY if the diagram tests graphical analysis or conceptual setup. "
-            "NEVER include a diagram that explicitly plots or displays the numerical answer on an axis (e.g., do NOT plot a distance-vs-time curve that explicitly shows the final answer value on the coordinate axis for a simple calculation question). "
-            "If 'diag_type' is 'graph', it must be a Velocity-Time graph or Acceleration-Time graph when testing graphical interpretation."
+            "PEDAGOGICAL TARGET (Conceptual/Qualitative / Understanding-Based):\n"
+            "- Focus on whether the student understands the underlying physics concept using qualitative tools, graphs, motion maps, or diagrams.\n"
+            "- Standards for questions: Can a student interpret a velocity-time graph to find displacement via area? Can they distinguish distance, displacement, and position on a position-time graph?\n"
+            "- MANDATORY DIAGRAM RULE: Set 'has_diagram': true and use a graph (Velocity-Time or Acceleration-Time or Position-Time) or conceptual visual model that serves the cognitive goal of representation analysis without trivially giving away direct algebraic calculation answers."
         )
     elif q_style == "Quantitative Arithmetic":
         style_instruction = (
-            "QUESTION STYLE (Quantitative Arithmetic): Focus on numerical calculation, algebraic derivations, "
-            "and precise quantitative problem-solving. "
-            "PEDAGOGICAL RULE: Set 'has_diagram': false unless a physical vector/geometry sketch is strictly necessary to understand the setup without giving away the final numerical value."
+            "PEDAGOGICAL TARGET (Quantitative Arithmetic / Computation-Based):\n"
+            "- Focus on algebraic execution, numerical problem-solving, and formula application.\n"
+            "- MANDATORY DIAGRAM RULE: Set 'has_diagram': false. A diagram must NOT be included in quantitative calculation questions to prevent handing the final numerical value or answer directly to the student on a coordinate axis."
         )
-    elif q_style == "Experimental Design":
+    elif q_style == "Experimental Design & Analytical Skills":
         style_instruction = (
-            "QUESTION STYLE (Experimental Design): Focus on laboratory setups, data collection, and error analysis. "
-            "MANDATORY VISUAL RULE: Set 'has_diagram': true with a relevant physical diagram structure."
+            "PEDAGOGICAL TARGET (Experimental Design / Performance & Skill-Based):\n"
+            "- Focus on laboratory setups, data collection, analytical skills, or minimizing/describing experimental measurement errors.\n"
+            "- Standards for questions: Asking students to evaluate raw lab data sets, analyze experimental graphs, identify sources of error, or describe procedures to reduce uncertainty.\n"
+            "- MANDATORY DIAGRAM RULE: Set 'has_diagram': true with an experimental setup or data plot where appropriate."
         )
     else:
-        style_instruction = "Ensure a rigorous balance of conceptual and quantitative application."
+        style_instruction = "Ensure a rigorous balance across conceptual, quantitative, and experimental skills."
 
     exclusion_context = ""
     if previous_questions:
@@ -275,14 +277,14 @@ def generate_single_ap_question(
 
     system_prompt = f"""
     You are an expert AP Physics item writer for College Board exam design in {course}. 
-    Generate EXACTLY ONE masterclass-quality, rigorous AP-level question.
+    Generate EXACTLY ONE masterclass-quality, rigorous AP-level question matching the specified pedagogical category.
     
     {rigor_guideline}
     {style_instruction}
     {exclusion_context}
     
     RIGOROUS ASSESSMENT INTEGRITY RULES:
-    1. NEVER GIVE AWAY THE ANSWER IN A DIAGRAM: If the question is a direct calculation (like finding displacement, force, or energy), do not use a solved coordinate graph that reveals the final answer on its axis. 
+    1. STRICT PEDAGOGICAL ALIGNMENT: If Quantitative Arithmetic, strictly ensure no giving away answers via diagrams (has_diagram: false). If Conceptual/Qualitative, leverage graphs/diagrams for true representation analysis. If Experimental Design, focus on lab inquiry and error analysis.
     2. Double-check all physics calculations before finalizing options.
     3. Psychometric Distractors: Incorrect multiple-choice options MUST NOT be random numbers. They must be engineered around well-documented AP student misconceptions (e.g., confusing mass with weight, omitting sine/cosine components, forgetting direction, or mixing up graph slopes/areas).
 
@@ -304,13 +306,13 @@ def generate_single_ap_question(
     1. Solve in 'scratchpad_derivation' FIRST.
     2. 'calculated_target_value' MUST match one of the choices in 'options'.
     3. Format ALL math with single dollar signs ($...$). Never use brackets like \\[ \\].
-    4. Set 'has_diagram': false for pure calculation questions to prevent giving away answers.
+    4. Adhere strictly to the 'has_diagram' rules defined by the pedagogical question style.
     """
 
     user_prompt = f"""
     Course: {course}
     Question Format: {q_format}
-    Question Style / Focus: {q_style}
+    Pedagogical Question Style / Category: {q_style}
     Physics Topic: {topic}
     """
 
@@ -370,13 +372,13 @@ with col1:
     )
 
 with col2:
+    # --- UPDATED PEDAGOGICAL CATEGORIES ---
     q_style = st.selectbox(
-        "Question Style / Focus",
+        "Pedagogical Question Style / Category",
         [
-            "Conceptual",
+            "Conceptual / Qualitative",
             "Quantitative Arithmetic",
-            "Experimental Design",
-            "Random (Mix of All Types)",
+            "Experimental Design & Analytical Skills",
         ],
     )
 
