@@ -1,4 +1,5 @@
 import json
+import random
 import re
 import matplotlib.pyplot as plt
 import numpy as np
@@ -34,7 +35,7 @@ def sanitize_json_response(raw_str: str) -> dict:
         return json.loads(cleaned_fallback, strict=False)
 
 # ==========================================
-# 2. HARDENED DIAGRAM ENGINE
+# 2. HARDENED & DYNAMIC DIAGRAM ENGINE
 # ==========================================
 
 def safe_float(val, default=1.0):
@@ -50,7 +51,7 @@ def draw_synchronized_diagram(diag_type, vectors, title="Physics Visual Model", 
 
     if diag_type == "graph":
         x_data = extra_params.get("x_data", [0, 1, 2, 3, 4])
-        y_data = extra_params.get("y_data", [0, 2.5, 5.0, 7.5, 10.0])
+        y_data = extra_params.get("y_data", [0, 3, 6, 9, 12])
         x_label = extra_params.get("x_label", "Time (s)")
         y_label = extra_params.get("y_label", "Velocity (m/s)")
         shade_area = extra_params.get("shade_area", False)
@@ -93,7 +94,7 @@ def draw_synchronized_diagram(diag_type, vectors, title="Physics Visual Model", 
     return fig
 
 # ==========================================
-# 3. PEDAGOGICALLY ALIGNED GENERATOR
+# 3. DYNAMICALLY RANDOMIZED AP GENERATOR
 # ==========================================
 
 def generate_single_ap_question(course, q_format, q_style, topic, previous_questions, api_key):
@@ -102,62 +103,87 @@ def generate_single_ap_question(course, q_format, q_style, topic, previous_quest
     is_calculus = "C:" in course
     rigor = "CALCULUS-BASED RIGOR (AP Physics C)." if is_calculus else "ALGEBRA-BASED RIGOR (AP Physics 1 & 2)."
 
+    # Inject dynamic random seed targets to force LLM variability
+    rand_seed_val = random.randint(10, 99)
+    rand_velocity = random.choice([3, 4, 6, 8, 12, 15])
+    rand_time = random.choice([3, 4, 5, 6, 8])
+
     if q_style == "Conceptual / Qualitative":
         style_instruction = (
-            "PEDAGOGICAL TARGET (Conceptual): Focus on physics concepts using qualitative tools (graphs, motion maps). "
-            "MANDATORY DIAGRAM RULE: 'has_diagram' MUST be true. Set 'diag_type' to 'graph'. "
-            "CRITICAL: You MUST provide 'x_data' and 'y_data' arrays of at least 4 coordinate points in 'extra_params'. "
-            "If assessing displacement from a v-t graph, set 'shade_area': true in extra_params."
+            "PEDAGOGICAL TARGET (Conceptual / Understanding-Based):\n"
+            "- Focus on physics concepts using qualitative tools, graphs, or motion maps.\n"
+            "- MANDATORY DIAGRAM RULE: 'has_diagram' MUST be true and set 'diag_type' to 'graph'.\n"
+            "- CRITICAL UNIQUENESS MANDATE: You must completely vary the physical scenario, object type (e.g., runner, train, cyclist, robotic rover), and coordinate values. "
+            f"For this generation, incorporate a randomized object speed around {rand_velocity} m/s and time interval of {rand_time} s to guarantee uniqueness.\n"
+            "- Populate 'extra_params' with custom 'x_data' and 'y_data' reflecting this unique scenario, and set 'shade_area': true if testing area under curve."
         )
     elif q_style == "Quantitative Arithmetic":
         style_instruction = (
-            "PEDAGOGICAL TARGET (Quantitative): Focus on algebraic execution and computation. "
-            "MANDATORY DIAGRAM RULE: 'has_diagram' MUST be false. Do NOT give away numerical values on a graph axis."
+            "PEDAGOGICAL TARGET (Quantitative / Computation-Based):\n"
+            "- Focus on algebraic execution, numerical problem-solving, and formula application.\n"
+            "- MANDATORY DIAGRAM RULE: 'has_diagram' MUST be false. Do NOT give away numerical values on a graph axis."
         )
     else:
         style_instruction = (
-            "PEDAGOGICAL TARGET (Experimental Design): Focus on laboratory setups, data collection, or error analysis. "
-            "MANDATORY DIAGRAM RULE: 'has_diagram' MUST be true."
+            "PEDAGOGICAL TARGET (Experimental Design / Performance & Skill-Based):\n"
+            "- Focus on laboratory setups, data collection, analytical skills, or minimizing/describing experimental measurement errors.\n"
+            "- MANDATORY DIAGRAM RULE: 'has_diagram' MUST be true with an experimental setup or data plot."
+        )
+
+    exclusion_context = ""
+    if previous_questions:
+        exclusion_context = (
+            f"STRICT ANTI-CLONING MANDATE:\n"
+            f"The teacher has already generated these questions in this test session:\n{json.dumps(previous_questions, indent=2)}\n\n"
+            f"YOU ARE STRICTLY FORBIDDEN FROM REPEATING ANY PREVIOUS SCENARIO, NUMERICAL VALUE, OBJECT, OR GRAPH SHAPE. "
+            f"Every single generation must introduce an entirely novel physical context and distinct variables (Random Seed Target: {rand_seed_val})."
         )
 
     system_prompt = f"""
-    You are an expert AP Physics item writer. Generate EXACTLY ONE rigorous {course} question.
-    {rigor} {style_instruction}
+    You are an expert AP Physics item writer. Generate EXACTLY ONE rigorous, entirely unique {course} question.
+    {rigor} 
+    {style_instruction}
+    {exclusion_context}
 
-    JSON STRUCTURE:
+    Output EXCLUSIVELY in valid JSON format using the EXACT structure below:
     {{
         "scratchpad_derivation": "Solve physics and check distractors here FIRST.",
-        "calculated_target_value": "20 m", 
-        "question_text": "A car moves with...",
-        "options": ["A) 10 m", "B) 20 m", "C) 25 m", "D) 40 m"], 
-        "correct_answer": "B", 
-        "explanation": "Explanation...",
-        "has_diagram": true,
-        "diag_type": "graph",
+        "calculated_target_value": "expected numeric string with units", 
+        "question_text": "Rigorously crafted unique question text using $...$ for math...",
+        "options": ["A) ...", "B) ...", "C) ...", "D) ..."], 
+        "correct_answer": "Letter", 
+        "explanation": "Detailed step-by-step derivation explaining distractors.",
+        "has_diagram": true/false,
+        "diag_type": "graph" or "none" or "incline",
         "vectors": [],
         "extra_params": {{
-            "x_data": [0, 1, 2, 3, 4],
-            "y_data": [5, 5, 5, 5, 5],
+            "x_data": [0, 1, 2, 3, {rand_time}],
+            "y_data": [0, {rand_velocity}, {rand_velocity}, {rand_velocity}, {rand_velocity}],
             "x_label": "Time (s)",
             "y_label": "Velocity (m/s)",
             "curve_type": "linear",
             "shade_area": true
         }}
     }}
-    CRITICAL: Math must use single $ signs. extra_params MUST be populated if diag_type is 'graph'.
+    CRITICAL RULES:
+    1. Math must use single $ signs. Never use brackets like \\[ \\].
+    2. Ensure absolute uniqueness from any previous questions.
     """
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         max_tokens=2000,
-        temperature=0.6,
+        temperature=0.85, # Higher temperature to encourage creative variation
         response_format={"type": "json_object"},
-        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Topic: {topic}"}],
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Course: {course} | Topic: {topic} | Format: {q_format}"}
+        ],
     )
     return sanitize_json_response(response.choices[0].message.content)
 
 # ==========================================
-# 4. STREAMLIT UI SETUP (COMPLETE & RESTORED)
+# 4. STREAMLIT UI SETUP (COMPLETE & UNIFIED)
 # ==========================================
 
 st.set_page_config(page_title="AP Physics Exam Builder", page_icon="⚡", layout="centered")
@@ -212,7 +238,11 @@ if generate_clicked:
     with st.spinner("Synthesizing unique AP item and enforcing pedagogical constraints..."):
         try:
             prev_questions_context = [
-                {"question_text": q.get("question_text", ""), "diag_type": q.get("diag_type", "none")} 
+                {
+                    "question_text": q.get("question_text", ""),
+                    "calculated_target_value": q.get("calculated_target_value", ""),
+                    "diag_type": q.get("diag_type", "none")
+                } 
                 for q in st.session_state["test_bank"]
             ]
             
