@@ -49,22 +49,18 @@ def draw_synchronized_diagram(diag_type, vectors, title="Physics Visual Model", 
         extra_params = {}
 
     if diag_type == "graph":
-        # Hardened fallback defaults to prevent blank renders
         x_data = extra_params.get("x_data", [0, 1, 2, 3, 4])
         y_data = extra_params.get("y_data", [0, 2.5, 5.0, 7.5, 10.0])
         x_label = extra_params.get("x_label", "Time (s)")
         y_label = extra_params.get("y_label", "Velocity (m/s)")
         shade_area = extra_params.get("shade_area", False)
-
         curve_type = extra_params.get("curve_type", "linear")
         
-        # Plot the main kinematic line
         if curve_type == "quadratic":
             ax.plot(x_data, y_data, color="#0033cc", linewidth=3, linestyle="-", marker="o")
         else:
             ax.plot(x_data, y_data, color="#0033cc", linewidth=3, marker="o")
 
-        # Pedagogical Tool: Shade area under curve if testing displacement/work
         if shade_area:
             ax.fill_between(x_data, y_data, color="#0033cc", alpha=0.2)
 
@@ -76,7 +72,6 @@ def draw_synchronized_diagram(diag_type, vectors, title="Physics Visual Model", 
         max_y = max(y_data) if y_data else 10
         min_y = min(y_data) if y_data else 0
         
-        # Dynamic axis buffering
         ax.set_xlim(0, max_x * 1.05 if max_x > 0 else 5)
         ax.set_ylim(min_y * 1.1 if min_y < 0 else 0, max_y * 1.15 if max_y > 0 else 10)
 
@@ -87,12 +82,10 @@ def draw_synchronized_diagram(diag_type, vectors, title="Physics Visual Model", 
         ax.fill([0, L, L, 0], [0, 0, L * np.tan(theta_rad), 0], color="#e0e0e0", edgecolor="black", zorder=1)
         bx, by = L * 0.5, (L * 0.5) * np.tan(theta_rad)
         ax.plot(bx, by, "ks", markersize=14, zorder=3)
-        # Vector rendering simplified for brevity...
         ax.set_aspect("equal")
         
-    else: # Default Free Body Diagram
+    else:
         ax.plot(0, 0, "ko", markersize=8)
-        # Standard FBD rendering...
         ax.set_aspect("equal")
 
     ax.set_title(title, fontsize=12, pad=12, weight="bold")
@@ -163,4 +156,156 @@ def generate_single_ap_question(course, q_format, q_style, topic, previous_quest
     )
     return sanitize_json_response(response.choices[0].message.content)
 
-# [Streamlit UI logic remains exactly the same as the previous iteration]
+# ==========================================
+# 4. STREAMLIT UI SETUP (COMPLETE & RESTORED)
+# ==========================================
+
+st.set_page_config(page_title="AP Physics Exam Builder", page_icon="⚡", layout="centered")
+st.title("⚡ AP Physics Test Builder & Item Generator")
+
+st.markdown("""
+*Build your custom exam **one rigorous question at a time**. Each generated item is uniquely crafted, 
+pedagogically verified, and paired with custom-rendered visual models designed for professional testing.*
+""")
+
+st.subheader("Exam & Target Settings")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    course = st.selectbox("AP Course", [
+        "AP Physics 1", 
+        "AP Physics 2", 
+        "AP Physics C: Mechanics", 
+        "AP Physics C: Electricity & Magnetism"
+    ])
+    
+    q_format = st.selectbox("Question Format", [
+        "Single-Select Multiple Choice (MC)",
+        "Multi-Select Multiple Choice (MS)",
+        "Free Response Question (FRQ)"
+    ])
+
+with col2:
+    q_style = st.selectbox("Pedagogical Question Style / Category", [
+        "Conceptual / Qualitative",
+        "Quantitative Arithmetic",
+        "Experimental Design & Analytical Skills"
+    ])
+
+    ap_topics_map = {
+        "AP Physics 1": ["Kinematics", "Dynamics", "Circular Motion and Gravitation", "Work, Energy, and Power", "Linear Momentum", "Torque and Rotational Motion", "Simple Harmonic Motion", "Fluids"],
+        "AP Physics 2": ["Fluids", "Thermodynamics", "Electric Force, Field, and Potential", "Electric Circuits", "Magnetism and Electromagnetism", "Optics", "Modern Physics"],
+        "AP Physics C: Mechanics": ["Kinematics", "Newton's Laws of Motion", "Work, Energy, and Power", "Systems of Particles and Linear Momentum", "Rotation and Angular Momentum", "Oscillations", "Gravitation"],
+        "AP Physics C: Electricity & Magnetism": ["Electrostatics", "Conductors, Capacitors, and Dielectrics", "Electric Circuits", "Magnetic Fields", "Electromagnetism"]
+    }
+
+    available_topics = ap_topics_map.get(course, ["General Physics"])
+    topic = st.selectbox("Physics Topic", available_topics)
+
+if "test_bank" not in st.session_state:
+    st.session_state["test_bank"] = []
+
+generate_clicked = st.button("Generate Next Test Question", type="primary")
+
+if generate_clicked:
+    with st.spinner("Synthesizing unique AP item and enforcing pedagogical constraints..."):
+        try:
+            prev_questions_context = [
+                {"question_text": q.get("question_text", ""), "diag_type": q.get("diag_type", "none")} 
+                for q in st.session_state["test_bank"]
+            ]
+            
+            new_q = generate_single_ap_question(course, q_format, q_style, topic, prev_questions_context, st.secrets["OPENAI_API_KEY"])
+            if new_q and "question_text" in new_q:
+                st.session_state["test_bank"].append(new_q)
+            else:
+                st.error("Failed to parse valid question structure. Please retry.")
+        except Exception as e:
+            st.error(f"Error generating question: {e}")
+
+# --- RENDER CURRENTLY BUILT TEST BANK ---
+if st.session_state["test_bank"]:
+    st.divider()
+    st.header(f"📋 Current Exam Draft ({course} — {topic})")
+    st.markdown(f"*Total Questions in Test Bank: {len(st.session_state['test_bank'])}*")
+
+    for i, q in enumerate(st.session_state["test_bank"], start=1):
+        st.markdown(f"---")
+        q_clean = clean_latex_for_streamlit(q.get("question_text", ""))
+        st.markdown(f"### Question {i}\n{q_clean}")
+
+        if q.get("has_diagram", False) and q.get("diag_type", "none") != "none":
+            diag_type = q.get("diag_type", "graph")
+            vectors = q.get("vectors", [])
+            extra_params = q.get("extra_params", {})
+            fig = draw_synchronized_diagram(diag_type, vectors, title=f"Q{i} Visual Model: {topic}", extra_params=extra_params)
+            st.pyplot(fig)
+
+        options = [clean_latex_for_streamlit(opt) for opt in q.get("options", [])]
+
+        if options and q_format != "Free Response Question (FRQ)":
+            st.markdown(f"#### Choose Your Answer (Q{i}):")
+            
+            if "Multi-Select" in q_format:
+                user_selections = []
+                for idx, opt in enumerate(options):
+                    if st.checkbox(opt, key=f"q_{i}_ms_opt_{idx}"):
+                        user_selections.append(opt[0])
+                
+                if st.button(f"Check Answer (Q{i})", key=f"check_btn_{i}"):
+                    raw_correct = str(q.get("correct_answer", ""))
+                    correct_letters = [c.strip() for c in re.split(r'[,&]', raw_correct) if c.strip() in "ABCD"]
+                    
+                    if sorted(user_selections) == sorted(correct_letters):
+                        st.success(f"🎉 Q{i} Correct! Answers: {', '.join(correct_letters)}.")
+                    else:
+                        st.error(f"❌ Q{i} Incorrect. Correct answers: {', '.join(correct_letters)}.")
+            else:
+                user_choice = st.radio("Options", options, key=f"q_{i}_radio", index=0)
+                
+                if st.button(f"Check Answer (Q{i})", key=f"check_btn_{i}"):
+                    correct_letter = str(q.get("correct_answer", "")).strip()
+                    if user_choice.startswith(correct_letter):
+                        st.success(f"🎉 Q{i} Correct! Answer: {correct_letter}.")
+                    else:
+                        st.error(f"❌ Q{i} Incorrect. Correct answer: {correct_letter}.")
+
+        with st.expander(f"View Solution & Explanation — Question {i}"):
+            st.markdown(f"**Correct Answer:** {q.get('correct_answer', 'N/A')}")
+            st.markdown(clean_latex_for_streamlit(q.get("explanation", "")))
+
+    if st.button("Clear Test Bank / Start New Test"):
+        st.session_state["test_bank"] = []
+        st.rerun()
+
+    # --- EXAM FEEDBACK LOGGING ---
+    st.divider()
+    st.subheader("Provide Feedback on Question Quality")
+    rating = st.radio("Rating", ["👍 Good", "👎 Needs Improvement"], key="exam_rating")
+    comment = st.text_area("Comments / Bug Details for this Test", key="exam_comment")
+
+    if st.button("Submit Test Feedback", key="submit_exam_feedback"):
+        try:
+            conn = st.connection("gsheets", type=GSheetsConnection)
+            spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+            existing_df = conn.read(spreadsheet=spreadsheet_url)
+            
+            new_row = {
+                "Timestamp": str(np.datetime64("now")),
+                "Course": course,
+                "Format": q_format,
+                "Style": q_style,
+                "Topic": topic,
+                "QuestionCount": len(st.session_state["test_bank"]),
+                "Rating": rating,
+                "Comment": comment
+            }
+            
+            new_row_df = pd.DataFrame([new_row])
+            updated_df = pd.concat([existing_df, new_row_df], ignore_index=True)
+            
+            conn.update(spreadsheet=spreadsheet_url, data=updated_df)
+            st.success("Test feedback successfully saved to Google Sheets!")
+        except Exception as e:
+            st.error(f"Error saving feedback: {e}")
