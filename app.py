@@ -210,11 +210,13 @@ def draw_synchronized_diagram(
 
 
 # ==========================================
-# 3. OPENAI BULK EXAM GENERATOR LOGIC
+# 3. OPENAI SINGLE-QUESTION MASTERCLASS GENERATOR
 # ==========================================
 
 
-def generate_ap_exam(course, q_format, q_style, topic, num_questions, api_key):
+def generate_single_ap_question(
+    course, q_format, q_style, topic, previous_questions, api_key
+):
     client = openai.OpenAI(api_key=api_key)
 
     is_calculus_course = "C:" in course
@@ -233,9 +235,9 @@ def generate_ap_exam(course, q_format, q_style, topic, num_questions, api_key):
         style_instruction = (
             "QUESTION STYLE (Conceptual/Graphical): Center on qualitative reasoning, reading and interpreting graphs "
             "or physical setup models. MANDATORY VISUAL RULE: Set 'has_diagram': true, choose an appropriate "
-            "'diag_type' ('fbd', 'incline', or 'graph'). EXACT DATA SYNC: If 'diag_type' is 'graph', you MUST mathematically "
-            "calculate the exact 'x_data' and 'y_data' array values matching the numbers stated in the question text "
-            "so the plotted graph matches the problem with 100% mathematical precision."
+            "'diag_type' ('fbd', 'incline', or 'graph'). EXACT DATA SYNC & PHYSICS INTEGRITY: If 'diag_type' is 'graph', "
+            "you MUST mathematically calculate the exact 'x_data' and 'y_data' array values matching the numbers stated "
+            "in the question text with 100% mathematical and physical precision (e.g., quadratic motion curves for distance-time)."
         )
     elif q_style == "Quantitative Arithmetic":
         style_instruction = (
@@ -248,41 +250,49 @@ def generate_ap_exam(course, q_format, q_style, topic, num_questions, api_key):
             "MANDATORY VISUAL RULE: Set 'has_diagram': true with a relevant physical diagram structure."
         )
     else:
-        style_instruction = "Ensure a balanced mix of conceptual, quantitative, and experimental design items."
+        style_instruction = "Ensure a rigorous balance of conceptual and quantitative application."
+
+    exclusion_context = ""
+    if previous_questions:
+        exclusion_context = (
+            f"EXCLUSION RULE: The teacher has already generated these questions in this test session: {previous_questions}. "
+            f"You MUST generate a completely unique, novel scenario testing a different aspect of '{topic}' to ensure variety."
+        )
 
     system_prompt = f"""
     You are an expert AP Physics item writer for College Board exam design in {course}. 
-    Generate exactly {num_questions} DISTINCT, non-repeating questions based on the user parameters.
+    Generate EXACTLY ONE masterclass-quality, rigorous AP-level question.
     
     {rigor_guideline}
     {style_instruction}
+    {exclusion_context}
+    
+    RIGOROUS PHYSICAL VERIFICATION:
+    - Double-check all physics calculations before finalizing options.
+    - If a graph is generated, its plotted curve or line must precisely match the physics equations stated in the question text.
     
     PSYCHOMETRIC DISTRACTOR REQUIREMENT:
     Incorrect multiple-choice options (distractors) MUST NOT be random numbers. They must be engineered around 
     well-documented AP student misconceptions (e.g., confusing mass with weight, omitting sine/cosine components, 
-    forgetting direction, or treating velocity-time graph slopes as absolute positions).
+    forgetting direction, or mixing up graph slopes/areas).
 
     Output EXCLUSIVELY in valid JSON format using the EXACT structure below:
     {{
-        "questions": [
-            {{
-                "scratchpad_derivation": "Step-by-step mathematical solution worked out FIRST.",
-                "calculated_target_value": "25 m", 
-                "question_text": "A car starts from rest and accelerates at a constant rate of 2 m/s^2 for 5 s. What is the total distance traveled?",
-                "options": ["A) 10 m", "B) 25 m", "C) 50 m", "D) 5 m"], 
-                "correct_answer": "B", 
-                "explanation": "Detailed step-by-step derivation matching the calculated_target_value and explaining distractors.",
-                "has_diagram": true,
-                "diag_type": "graph",
-                "vectors": [],
-                "extra_params": {{
-                    "x_data": [0, 5],
-                    "y_data": [0, 10],
-                    "x_label": "Time (s)",
-                    "y_label": "Velocity (m/s)"
-                }}
-            }}
-        ]
+        "scratchpad_derivation": "Step-by-step mathematical solution and physics verification worked out FIRST.",
+        "calculated_target_value": "25 m", 
+        "question_text": "A car starts from rest and accelerates at a constant rate of 2 m/s^2 for 5 s. What is the total distance traveled?",
+        "options": ["A) 10 m", "B) 25 m", "C) 50 m", "D) 5 m"], 
+        "correct_answer": "B", 
+        "explanation": "Detailed step-by-step derivation matching the calculated_target_value and explaining distractors.",
+        "has_diagram": true,
+        "diag_type": "graph",
+        "vectors": [],
+        "extra_params": {{
+            "x_data": [0, 5],
+            "y_data": [0, 10],
+            "x_label": "Time (s)",
+            "y_label": "Velocity (m/s)"
+        }}
     }}
 
     CRITICAL RULES:
@@ -297,13 +307,12 @@ def generate_ap_exam(course, q_format, q_style, topic, num_questions, api_key):
     Question Format: {q_format}
     Question Style / Focus: {q_style}
     Physics Topic: {topic}
-    Number of Questions Required: {num_questions}
     """
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
-        max_tokens=3000,
-        temperature=0.4,
+        max_tokens=2000,
+        temperature=0.5,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": system_prompt},
@@ -320,11 +329,18 @@ def generate_ap_exam(course, q_format, q_style, topic, num_questions, api_key):
 # ==========================================
 
 st.set_page_config(
-    page_title="AP Physics Exam Generator", page_icon="⚡", layout="centered"
+    page_title="AP Physics Exam Builder", page_icon="⚡", layout="centered"
 )
-st.title("⚡ AP Physics Exam & Question Generator")
+st.title("⚡ AP Physics Test Builder & Item Generator")
 
-st.subheader("Exam Configuration")
+st.markdown(
+    """
+*Build your custom AP exam **one rigorous question at a time**. Each generated item is uniquely crafted, 
+pedagogically verified, and paired with custom-rendered visual models designed for professional testing.*
+"""
+)
+
+st.subheader("Exam & Target Settings")
 
 col1, col2 = st.columns(2)
 
@@ -400,34 +416,44 @@ with col2:
     available_topics = ap_topics_map.get(course, ["General Physics"])
     topic = st.selectbox("Physics Topic", available_topics)
 
-num_questions = st.slider(
-    "Number of Questions in Exam Set", min_value=1, max_value=5, value=3
-)
+# Initialize session state for building a test bank of questions
+if "test_bank" not in st.session_state:
+    st.session_state["test_bank"] = []
 
-if st.button("Generate Exam Set", type="primary"):
-    with st.spinner(f"Drafting custom {num_questions}-question AP exam set with polished visual models..."):
+generate_clicked = st.button("Generate Next Test Question", type="primary")
+
+if generate_clicked:
+    with st.spinner("Synthesizing rigorous AP item and verifying visual model..."):
         try:
-            data = generate_ap_exam(
+            # Collect previously generated question summaries to avoid duplication
+            prev_summaries = [
+                q.get("question_text", "")[:50]
+                for q in st.session_state["test_bank"]
+            ]
+            new_q = generate_single_ap_question(
                 course,
                 q_format,
                 q_style,
                 topic,
-                num_questions,
+                prev_summaries,
                 st.secrets["OPENAI_API_KEY"],
             )
-            st.session_state["current_exam"] = data
+            if new_q and "question_text" in new_q:
+                st.session_state["test_bank"].append(new_q)
+            else:
+                st.error("Failed to parse valid question structure. Please retry.")
         except Exception as e:
-            st.error(f"Error generating exam: {e}")
+            st.error(f"Error generating question: {e}")
 
-if "current_exam" in st.session_state and "questions" in st.session_state["current_exam"]:
-    exam_data = st.session_state["current_exam"]
-    questions = exam_data.get("questions", [])
-
+# --- RENDER CURRENTLY BUILT TEST BANK ---
+if st.session_state["test_bank"]:
     st.divider()
-    st.header(f"📋 Generated {course} Assessment ({topic})")
-    st.markdown(f"*Total Questions: {len(questions)} | Format: {q_format}*")
+    st.header(f"📋 Current Exam Draft ({course} — {topic})")
+    st.markdown(
+        f"*Total Questions in Test Bank: {len(st.session_state['test_bank'])}*"
+    )
 
-    for i, q in enumerate(questions, start=1):
+    for i, q in enumerate(st.session_state["test_bank"], start=1):
         st.markdown(f"---")
         q_clean = clean_latex_for_streamlit(q.get("question_text", ""))
         st.markdown(f"### Question {i}\n{q_clean}")
@@ -437,7 +463,12 @@ if "current_exam" in st.session_state and "questions" in st.session_state["curre
             diag_type = q.get("diag_type", "fbd")
             vectors = q.get("vectors", [])
             extra_params = q.get("extra_params", {})
-            fig = draw_synchronized_diagram(diag_type, vectors, title=f"Q{i} Visual Model: {topic}", extra_params=extra_params)
+            fig = draw_synchronized_diagram(
+                diag_type,
+                vectors,
+                title=f"Q{i} Visual Model: {topic}",
+                extra_params=extra_params,
+            )
             st.pyplot(fig)
 
         options = [clean_latex_for_streamlit(opt) for opt in q.get("options", [])]
@@ -454,34 +485,52 @@ if "current_exam" in st.session_state and "questions" in st.session_state["curre
                 if st.button(f"Check Answer (Q{i})", key=f"check_btn_{i}"):
                     raw_correct = str(q.get("correct_answer", ""))
                     correct_letters = [
-                        c.strip() for c in re.split(r"[,&]", raw_correct) if c.strip() in "ABCD"
+                        c.strip()
+                        for c in re.split(r"[,&]", raw_correct)
+                        if c.strip() in "ABCD"
                     ]
 
                     if sorted(user_selections) == sorted(correct_letters):
-                        st.success(f"🎉 Q{i} Correct! Answers: {', '.join(correct_letters)}.")
+                        st.success(
+                            f"🎉 Q{i} Correct! Answers: {', '.join(correct_letters)}."
+                        )
                     else:
-                        st.error(f"❌ Q{i} Incorrect. Correct answers: {', '.join(correct_letters)}.")
+                        st.error(
+                            f"❌ Q{i} Incorrect. Correct answers: {', '.join(correct_letters)}."
+                        )
             else:
-                user_choice = st.radio("Options", options, key=f"q_{i}_radio", index=0)
+                user_choice = st.radio(
+                    "Options", options, key=f"q_{i}_radio", index=0
+                )
 
                 if st.button(f"Check Answer (Q{i})", key=f"check_btn_{i}"):
                     correct_letter = str(q.get("correct_answer", "")).strip()
                     if user_choice.startswith(correct_letter):
-                        st.success(f"🎉 Q{i} Correct! Answer: {correct_letter}.")
+                        st.success(
+                            f"🎉 Q{i} Correct! Answer: {correct_letter}."
+                        )
                     else:
-                        st.error(f"❌ Q{i} Incorrect. Correct answer: {correct_letter}.")
+                        st.error(
+                            f"❌ Q{i} Incorrect. Correct answer: {correct_letter}."
+                        )
 
         with st.expander(f"View Solution & Explanation — Question {i}"):
-            st.markdown(f"**Correct Answer:** {q.get('correct_answer', 'N/A')}")
+            st.markdown(
+                f"**Correct Answer:** {q.get('correct_answer', 'N/A')}"
+            )
             st.markdown(clean_latex_for_streamlit(q.get("explanation", "")))
+
+    if st.button("Clear Test Bank / Start New Test"):
+        st.session_state["test_bank"] = []
+        st.rerun()
 
     # --- EXAM FEEDBACK LOGGING ---
     st.divider()
-    st.subheader("Provide Feedback on Exam Set")
+    st.subheader("Provide Feedback on Question Quality")
     rating = st.radio("Rating", ["👍 Good", "👎 Needs Improvement"], key="exam_rating")
-    comment = st.text_area("Comments / Bug Details for this Exam", key="exam_comment")
+    comment = st.text_area("Comments / Bug Details for this Test", key="exam_comment")
 
-    if st.button("Submit Exam Feedback", key="submit_exam_feedback"):
+    if st.button("Submit Test Feedback", key="submit_exam_feedback"):
         try:
             conn = st.connection("gsheets", type=GSheetsConnection)
             spreadsheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
@@ -493,7 +542,7 @@ if "current_exam" in st.session_state and "questions" in st.session_state["curre
                 "Format": q_format,
                 "Style": q_style,
                 "Topic": topic,
-                "QuestionCount": len(questions),
+                "QuestionCount": len(st.session_state["test_bank"]),
                 "Rating": rating,
                 "Comment": comment,
             }
@@ -502,6 +551,6 @@ if "current_exam" in st.session_state and "questions" in st.session_state["curre
             updated_df = pd.concat([existing_df, new_row_df], ignore_index=True)
 
             conn.update(spreadsheet=spreadsheet_url, data=updated_df)
-            st.success("Exam feedback successfully saved to Google Sheets!")
+            st.success("Test feedback successfully saved to Google Sheets!")
         except Exception as e:
             st.error(f"Error saving feedback: {e}")
